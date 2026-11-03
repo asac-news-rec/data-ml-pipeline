@@ -1,5 +1,5 @@
 name: Bug
-description: GCP 인프라, IaC, workflow, 권한 오류를 보고합니다.
+description: DAG, SQL, 피처, 학습·평가 코드의 오류를 보고합니다.
 title: "[BUG] "
 labels: ["bug"]
 body:
@@ -13,7 +13,7 @@ body:
     attributes:
       label: 현상
       description: 어떤 문제가 발생했는지 간략히 설명해 주세요.
-      placeholder: 예) Cloud Run Job 배포 workflow가 Secret Manager 권한 오류로 실패합니다.
+      placeholder: 예) build_features DAG가 전날 파티션이 비어 있을 때 실패합니다.
     validations:
       required: true
 
@@ -51,20 +51,16 @@ body:
       label: 영향받는 컴포넌트
       multiple: true
       options:
-        - Docker Compose (로컬 개발 환경)
-        - Terraform / IaC
-        - Helm / Kubernetes
-        - GCP Project / IAM
-        - Secret Manager
-        - Artifact Registry
-        - Cloud Run / Cloud Run Jobs
-        - Cloud Scheduler
-        - GCS
-        - BigQuery
-        - Logging / Monitoring
+        - 수집 적재 (GCS → BigQuery raw)
+        - 정제·집계 (clean, agg)
+        - 피처 (feat, 서빙용 내보내기)
+        - 학습 데이터 (train.samples)
+        - 모델 학습·평가
+        - MLflow 등록·승격
+        - Airflow DAG
         - GitHub Actions / CI-CD
         - GitHub 협업 설정
-        - 운영 문서
+        - 문서
         - 기타
     validations:
       required: true
@@ -73,13 +69,12 @@ body:
     id: environment
     attributes:
       label: 실행 환경
-      description: 브랜치, GCP 프로젝트/리전, workflow run, 관련 설정을 적어 주세요.
+      description: 브랜치, 실행한 DAG·명령, 대상 날짜·파티션, 관련 설정을 적어 주세요.
       value: |
         - Branch:
-        - GCP project:
-        - Region:
-        - Event:
-        - Workflow run:
+        - DAG / Command:
+        - 대상 날짜·파티션:
+        - Python:
         - Related setting:
     validations:
       required: false

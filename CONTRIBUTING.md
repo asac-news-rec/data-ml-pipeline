@@ -1,8 +1,8 @@
 # 기여 가이드 (Contributing Guide)
 
-infra 저장소에 기여해 주셔서 감사합니다.
-이 저장소는 ASAC 파이널 프로젝트(뉴스 추천 시스템)의 로컬 개발 환경(Docker Compose),
-클라우드 인프라(Terraform, Helm)와 GitHub 운영 자동화를 관리합니다.
+data-ml-pipeline 저장소에 기여해 주셔서 감사합니다.
+이 저장소는 ASAC 파이널 프로젝트(뉴스 추천 시스템)의 데이터 처리(Airflow DAG,
+BigQuery SQL), 피처, 모델 학습·평가 코드를 관리합니다.
 원활한 협업을 위해 아래 규칙을 따라 주세요.
 
 ---
@@ -11,7 +11,7 @@ infra 저장소에 기여해 주셔서 감사합니다.
 
 ```
 이슈 등록 → 작업 브랜치 생성 → 작업/검증 → Draft PR 생성 → 셀프 리뷰 및 설명 보강
-       → Ready for review 전환 → 에이전트 리뷰 실행 → 이해도 체크 inline 답변
+       → Ready for review 전환 → (자동 리뷰를 켠 뒤) 이해도 체크 inline 답변
        → 팀원 리뷰 요청 → 최소 2명 승인 → Squash merge
 ```
 
@@ -23,15 +23,15 @@ infra 저장소에 기여해 주셔서 감사합니다.
    GitHub이 제안한 기본 이름은 사용하지 말고, 생성 대화상자에서
    `<type>/<이슈번호>-<영어-소문자-슬러그>`로 직접 수정합니다.
 
-3. **작업 및 검증**: 커밋 컨벤션에 따라 커밋 메시지를 작성합니다. 모든 변경은 `git diff --check`를 통과시키고, 변경 영역별 검증(compose: `docker compose config`, Terraform [계획]: `fmt`/`validate`)을 실행합니다.
+3. **작업 및 검증**: 커밋 컨벤션에 따라 커밋 메시지를 작성합니다. 모든 변경은 `git diff --check`를 통과시키고, 변경 영역별 검증(Python [계획]: lint·pytest, DAG [계획]: import 로드 확인)을 실행합니다.
 
 4. **Draft PR 생성**: 작업이 완료되면 Draft PR을 엽니다. PR 템플릿을 채우고 본문에 `Closes #이슈번호`를 포함합니다.
 
-5. **셀프 리뷰 및 설명 보강**: 본인이 diff를 처음부터 끝까지 읽고 PR 설명, 검증 결과, 영향 범위(IAM/비용/리전/롤백)를 보강합니다.
+5. **셀프 리뷰 및 설명 보강**: 본인이 diff를 처음부터 끝까지 읽고 PR 설명, 검증 결과, 영향 범위(데이터 계약, BigQuery 비용)를 보강합니다.
 
 6. **Ready for review 전환**: 설명이 충분해지면 Draft를 해제해 리뷰를 요청할 수 있는 상태로 전환합니다.
 
-7. **에이전트 리뷰 실행**: Ready로 전환되면 Claude Code PR Review workflow가 자동 실행됩니다. (Draft에서는 실행되지 않습니다.)
+7. **에이전트 리뷰 실행** **[미정]**: 자동 리뷰 workflow(`claude.yml`)는 아직 넣지 않았습니다. 시크릿·비용을 팀이 정한 뒤 켭니다.
 
 8. **이해도 체크 inline 답변**: 에이전트가 남긴 `이해도 확인:` inline comment 각각에 같은 스레드에서 답변하고, 필요하면 로컬에서 검증한 뒤 resolve합니다.
 
@@ -51,18 +51,18 @@ infra 저장소에 기여해 주셔서 감사합니다.
 규칙을 만족하지 않을 수 있으므로, 생성 전에 아래 형식의 영어 이름으로 수정합니다.
 
 ```bash
-# 이슈에서 Create a branch로 브랜치 생성(예: feat/42-add-docker-compose) 후
+# 이슈에서 Create a branch로 브랜치 생성(예: feat/42-add-clean-events-dag) 후
 git fetch origin
-git switch feat/42-add-docker-compose
+git switch feat/42-add-clean-events-dag
 ```
 
 | 유형 | 패턴 | 예시 |
 |------|------|------|
-| 기능 개발 | `feat/이슈번호-간략한-설명` | `feat/42-add-docker-compose` |
-| 버그 수정 | `fix/이슈번호-간략한-설명` | `fix/57-fix-compose-port` |
-| 실험 | `exp/이슈번호-간략한-설명` | `exp/61-compare-airflow-setup` |
+| 기능 개발 | `feat/이슈번호-간략한-설명` | `feat/42-add-clean-events-dag` |
+| 버그 수정 | `fix/이슈번호-간략한-설명` | `fix/57-fix-feature-window` |
+| 실험 | `exp/이슈번호-간략한-설명` | `exp/61-compare-lightgbm-params` |
 | 문서 | `docs/이슈번호-간략한-설명` | `docs/30-update-readme` |
-| 리팩터링 | `refactor/이슈번호-간략한-설명` | `refactor/48-split-compose-files` |
+| 리팩터링 | `refactor/이슈번호-간략한-설명` | `refactor/48-split-feature-sql` |
 | 기타 | `chore/이슈번호-간략한-설명` | `chore/10-setup-ci` |
 
 - 영어 소문자와 하이픈(`-`)만 사용합니다.
@@ -82,20 +82,20 @@ git switch feat/42-add-docker-compose
 
 | type | 사용 상황 |
 |------|-----------|
-| `feat` | 로컬 개발 환경, 클라우드 인프라 리소스, IaC, GitHub 자동화 추가 |
-| `fix` | 인프라 설정, 권한, workflow, 문서 오류 수정 |
-| `refactor` | 동작 변화 없는 IaC/문서/설정 구조 정리 |
+| `feat` | DAG, SQL, 피처, 학습·평가 코드, GitHub 자동화 추가 |
+| `fix` | DAG·SQL·코드·workflow·문서 오류 수정 |
+| `refactor` | 동작 변화 없는 코드/SQL/문서 구조 정리 |
 | `docs` | 문서 추가·수정 |
 | `chore` | 저장소 기본 설정, 관리 작업 |
-| `exp` | 구성 방식, 도구, 운영 자동화 실험 |
+| `exp` | 모델, 피처, 지표 실험 |
 
 ### 예시
 
 ```
-feat: Postgres 컨테이너 설정 추가
-fix: Airflow 포트 충돌 수정
-exp: 가짜 GCS 에뮬레이터 비교
-docs: compose 실행 가이드 초안 작성
+feat: clean_events DAG 추가
+fix: 피처 집계 창 경계 오류 수정
+exp: 인기순 baseline과 LightGBM 비교
+docs: 피처 정의서 초안 작성
 ```
 
 - 설명은 한국어로 작성합니다.
@@ -117,24 +117,22 @@ docs: compose 실행 가이드 초안 작성
 설정되어 있지 않습니다. 비공개 레포에서 규칙을 강제할 수 있는지는 GitHub 레포
 Settings → Rules에서 확인하고, 강제할 수 없으면 위 규칙을 팀 약속으로 지킵니다.
 
-## 인프라 변경 리뷰 원칙
+## 데이터·ML 변경 리뷰 원칙
 
-- (클라우드 변경이라면) GCP 리소스의 프로젝트, 리전, 이름, 비용 영향을 확인합니다.
-- IAM 권한은 최소 권한 원칙을 따릅니다.
+- 테이블·피처 스키마, 이벤트 필드 같은 데이터 계약이 바뀌면 PR에 적고 영향받는 팀원을 리뷰어로 넣습니다.
+- 학습 데이터는 노출 시각 이전 값만 쓰도록 시점 기준으로 조인합니다 (미래 정보 누수 방지).
+- BigQuery 쿼리는 파티션 필터를 쓰고 `SELECT *`를 피합니다.
 - Secret 값은 코드, 로그, PR 본문에 포함하지 않습니다.
-- Terraform state, service account key, `.env` 파일은 커밋하지 않습니다.
-- 삭제/교체/권한 확대 변경은 롤백 방법을 PR에 적습니다.
+- service account key, `.env`, 생성된 데이터·모델 파일은 커밋하지 않습니다.
 
 ---
 
-## Claude 자동 리뷰
+## Claude 자동 리뷰 [미정]
 
-`.github/workflows/claude.yml`은 PR이 처음 열리거나(`opened`) Draft에서 Ready for review로 전환되면(`ready_for_review`) Claude Code 리뷰를 자동 실행합니다. Draft 상태에서는 실행되지 않습니다.
+자동 리뷰 workflow(`.github/workflows/claude.yml`)는 이 레포에 아직 넣지 않았습니다. 리뷰를 부를 계정, 모델, 사용량 한도를 팀이 정한 뒤 infra 레포의 파일을 가져와 켭니다.
 
-- 에이전트가 남긴 `이해도 확인:` inline comment에는 같은 스레드에서 답변하고, 필요하면 로컬에서 검증한 뒤 resolve합니다.
-- trivial, docs-only, formatting-only 변경에는 이해도 확인 comment를 남기지 않는 정책입니다.
-- 필요한 repository secret: `CLAUDE_CODE_OAUTH_TOKEN` (**[준비 중]** 등록 전에는 실패로 표시될 수 있습니다)
-- 에이전트 작업 규칙은 `CLAUDE.md`/`AGENTS.md`(symlink)와 `.claude/docs/`를 기준으로 합니다.
+- 켠 뒤에는 에이전트가 남긴 `이해도 확인:` inline comment에 같은 스레드에서 답변하고 resolve합니다.
+- 에이전트 작업 규칙은 `CLAUDE.md`(`AGENTS.md`는 symlink)를 기준으로 합니다.
 
 ---
 
@@ -152,8 +150,7 @@ Project 보드는 아직 사용하지 않습니다. **[미정]**
 ## CI 및 검증
 
 - `.github/workflows/branch-name-policy.yml` — 브랜치 이름 형식을 검사합니다.
-- `.github/workflows/claude.yml` — Claude Code PR 리뷰.
-- **[계획]** 클라우드 연동 후 Terraform plan 등 검증 workflow를 추가합니다.
+- **[계획]** Python 코드가 생기면 lint·pytest·DAG 로드 검사 workflow를 추가합니다.
 
 로컬 검증:
 
@@ -161,16 +158,12 @@ Project 보드는 아직 사용하지 않습니다. **[미정]**
 git diff --check
 ```
 
-- compose 변경 **[계획]**: `docker compose config`로 문법을 확인하고 실제로 `up`이 되는지 확인합니다.
-- Terraform 변경 **[계획]**: `fmt -check`, `validate`를 통과시키고, `plan`은 실제 GCP project id와 인증이 준비된 뒤 실행합니다. 로컬 `terraform.tfvars`와 state/plan 파일은 커밋하지 않습니다.
+- Python 변경 **[계획]**: 패키지 관리·lint·테스트 도구가 정해지면 명령을 적습니다.
+- DAG 변경 **[계획]**: infra 레포 compose의 Airflow에서 DAG가 오류 없이 로드되는지 확인합니다.
 
 ---
 
 ## 문제 해결
-
-**Claude 리뷰가 실행되지 않을 때**: repository secret `CLAUDE_CODE_OAUTH_TOKEN` 등록 여부, PR의 Draft 상태, workflow event(`opened`, `ready_for_review`), GitHub Actions 권한을 확인합니다.
-
-**(클라우드 연동 후) GCP 인증 workflow가 실패할 때**: GitHub OIDC provider와 service account binding, workflow `permissions`의 `id-token: write`, 대상 GCP project id와 service account email, 최소 권한 IAM role을 확인합니다.
 
 **PR이 merge되지 않을 때**: Draft 상태인지, approve 2명이 있는지, 모든 대화가 resolve되었는지, 충돌이 있는지, required check(`branch-name-policy`)가 실패했는지 확인합니다.
 
@@ -180,7 +173,7 @@ git diff --check
 
 ## 참고 링크
 
-- Repository: https://github.com/asac-news-rec/infra
+- Repository: https://github.com/asac-news-rec/data-ml-pipeline
 - Issue Forms: `.github/ISSUE_TEMPLATE/*.yml`
 - PR template: `.github/PULL_REQUEST_TEMPLATE.md`
-- 에이전트 가이드: `CLAUDE.md`, `AGENTS.md`(symlink), `.claude/docs/`
+- 에이전트 가이드: `CLAUDE.md`, `AGENTS.md`(symlink)

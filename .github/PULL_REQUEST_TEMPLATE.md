@@ -15,14 +15,14 @@ Closes #
 
 - [ ] Assignee를 생성자 본인으로 지정하고, 레포에 있는 label 중 변경 성격에 맞는 것을 부여했다
 - [ ] 브랜치가 `<type>/<이슈번호>-<영어-소문자-하이픈>` 형식이다
-- [ ] (클라우드 변경이라면) 대상 GCP 프로젝트, 리전, 리소스 이름을 확인했다
-- [ ] IAM 권한이 최소 권한 원칙을 따른다
-- [ ] secret 값, service account key, Terraform state가 포함되지 않았다
-- [ ] 비용, quota, 삭제/교체 영향 범위를 확인했다
-- [ ] workflow 권한, secret 이름, trigger 조건을 확인했다
-- [ ] Terraform/IaC 변경이 있다면 fmt/validate/plan 결과를 확인했다
-- [ ] Docker Compose 변경이 있다면 `docker compose config`와 실제 `up`을 확인했다
-- [ ] 관련 운영 문서(README, runbook 등)를 업데이트했다
+- [ ] 코드가 로컬에서 정상적으로 실행된다
+- [ ] (DAG 변경이라면) 로컬 Airflow에서 DAG가 오류 없이 로드되고 실행된다
+- [ ] 테이블·피처 스키마, 이벤트 필드 변경 영향 범위를 확인했다
+- [ ] 학습 데이터에 노출 시각 이후 정보가 섞이지 않는다 (시점 기준 조인)
+- [ ] BigQuery 쿼리가 파티션 필터를 쓰고 `SELECT *`를 피한다
+- [ ] 기존 테스트가 통과하고, 필요한 경우 테스트를 추가했다
+- [ ] secret 값, service account key, 생성된 데이터·모델 파일이 포함되지 않았다
+- [ ] 관련 문서(README, 피처 정의서, docstring 등)를 업데이트했다
 - [ ] `git diff --check`를 통과했다
 - [ ] 시크릿/개인정보가 코드에 포함되지 않았다
 
