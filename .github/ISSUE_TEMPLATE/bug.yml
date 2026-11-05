@@ -1,0 +1,89 @@
+name: Bug
+description: DAG, SQL, 피처, 학습·평가 코드의 오류를 보고합니다.
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        버그는 재현 가능한 정보가 가장 중요합니다. 가능하면 같은 절차로 다시 발생시킬 수 있게 작성해 주세요.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 현상
+      description: 어떤 문제가 발생했는지 간략히 설명해 주세요.
+      placeholder: 예) build_features DAG가 전날 파티션이 비어 있을 때 실패합니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 방법
+      description: 문제를 다시 확인할 수 있는 절차를 순서대로 적어 주세요.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작
+      description: 정상적으로 동작했다면 어떤 결과가 나와야 하나요?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 동작
+      description: 실제로 관찰한 결과를 적어 주세요.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 영향받는 컴포넌트
+      multiple: true
+      options:
+        - 수집 적재 (GCS → BigQuery raw)
+        - 정제·집계 (clean, agg)
+        - 피처 (feat, 서빙용 내보내기)
+        - 학습 데이터 (train.samples)
+        - 모델 학습·평가
+        - MLflow 등록·승격
+        - Airflow DAG
+        - GitHub Actions / CI-CD
+        - GitHub 협업 설정
+        - 문서
+        - 기타
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 실행 환경
+      description: 브랜치, 실행한 DAG·명령, 대상 날짜·파티션, 관련 설정을 적어 주세요.
+      value: |
+        - Branch:
+        - DAG / Command:
+        - 대상 날짜·파티션:
+        - Python:
+        - Related setting:
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 로그
+      description: 에러 메시지나 관련 로그를 붙여 주세요.
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,70 @@
+name: Feature
+description: DAG, SQL, 피처, 학습·평가 코드 추가 또는 개선 작업을 제안합니다.
+title: "[FEAT] "
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature issue는 데이터 처리·피처·모델 변경의 출발점입니다. PR은 이 issue의 완료 조건을 만족하도록 작게 나누어 주세요.
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 목적
+      description: 이 변경이 왜 필요한지, 어떤 문제를 해결하는지 설명해 주세요.
+      placeholder: 예) 매시 raw.events를 정제해 clean.events에 쌓는 DAG를 추가합니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 작업 범위
+      description: 이번 issue에서 할 일을 체크리스트로 적어 주세요.
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 영향받는 컴포넌트
+      multiple: true
+      options:
+        - 수집 적재 (GCS → BigQuery raw)
+        - 정제·집계 (clean, agg)
+        - 피처 (feat, 서빙용 내보내기)
+        - 학습 데이터 (train.samples)
+        - 모델 학습·평가
+        - MLflow 등록·승격
+        - Airflow DAG
+        - GitHub Actions / CI-CD
+        - GitHub 협업 설정
+        - 문서
+        - 기타
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      description: 이 issue가 끝났다고 판단할 수 있는 기준을 적어 주세요.
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: 참고 사항
+      description: 관련 링크(청사진, 피처 정의서), 데이터 계약 영향, BigQuery 비용 제약이 있으면 적어 주세요.
+    validations:
+      required: false

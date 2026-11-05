@@ -1,0 +1,84 @@
+name: Experiment
+description: 모델, 피처, 지표 실험을 기록합니다.
+title: "[EXP] "
+labels: ["experiment"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        실험 issue는 가설과 판정 기준을 먼저 정하는 데 목적이 있습니다. 결과가 나오면 같은 issue에 요약을 남겨 주세요.
+
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: 가설
+      description: 이번 실험으로 검증하려는 가설을 명확하게 적어 주세요.
+      placeholder: 예) 사용자 카테고리 선호 피처를 추가하면 인기순 baseline보다 nDCG@10이 오른다.
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: 실험 대상
+      description: 실험할 모델, 피처, 데이터셋(기간·버전)을 적어 주세요.
+      placeholder: 예) LightGBM + 카테고리 선호 피처, 학습 기간 10/01~10/28
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 영역
+      options:
+        - 피처
+        - 후보 생성
+        - 랭킹 모델
+        - 후처리
+        - 평가 지표
+        - 학습 데이터 구성
+        - 기타
+    validations:
+      required: true
+
+  - type: dropdown
+    id: criterion
+    attributes:
+      label: 주요 판정 기준
+      multiple: true
+      options:
+        - CTR / AUC
+        - nDCG@K
+        - 인기순 baseline 대비 개선
+        - 학습·추론 시간
+        - BigQuery 비용
+        - 기타
+    validations:
+      required: true
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: 실험 설정
+      description: 피처, 하이퍼파라미터, 비교군, 실행 방법을 적어 주세요.
+      value: |
+        - Features:
+        - Hyperparameters:
+        - Baseline / Champion:
+        - 시간 분할(학습·검증·테스트):
+        - Command:
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: 결과
+      description: 실험 후 MLflow run, 지표 요약, 결론을 업데이트해 주세요.
+      value: |
+        - MLflow Run:
+        - Metric Summary:
+        - 결론:
+        - 후속 작업:
+    validations:
+      required: false
