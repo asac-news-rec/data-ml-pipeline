@@ -11,7 +11,7 @@ BigQuery SQL), 피처, 모델 학습·평가 코드를 관리합니다.
 
 ```
 이슈 등록 → 작업 브랜치 생성 → 작업/검증 → Draft PR 생성 → 셀프 리뷰 및 설명 보강
-       → Ready for review 전환 → (자동 리뷰를 켠 뒤) 이해도 체크 inline 답변
+       → Ready for review 전환 → 이해도 체크 inline 답변
        → 팀원 리뷰 요청 → 최소 2명 승인 → Squash merge
 ```
 
@@ -31,7 +31,7 @@ BigQuery SQL), 피처, 모델 학습·평가 코드를 관리합니다.
 
 6. **Ready for review 전환**: 설명이 충분해지면 Draft를 해제해 리뷰를 요청할 수 있는 상태로 전환합니다.
 
-7. **에이전트 리뷰 실행** **[미정]**: 자동 리뷰 workflow(`claude.yml`)는 아직 넣지 않았습니다. 시크릿·비용을 팀이 정한 뒤 켭니다.
+7. **에이전트 리뷰 실행**: Draft가 아닌 PR을 열거나 Ready for review로 전환하면 `claude.yml`이 에이전트 리뷰를 실행합니다.
 
 8. **이해도 체크 inline 답변**: 에이전트가 남긴 `이해도 확인:` inline comment 각각에 같은 스레드에서 답변하고, 필요하면 로컬에서 검증한 뒤 resolve합니다.
 
@@ -127,11 +127,11 @@ Settings → Rules에서 확인하고, 강제할 수 없으면 위 규칙을 팀
 
 ---
 
-## Claude 자동 리뷰 [미정]
+## Claude 자동 리뷰
 
-자동 리뷰 workflow(`.github/workflows/claude.yml`)는 이 레포에 아직 넣지 않았습니다. 리뷰를 부를 계정, 모델, 사용량 한도를 팀이 정한 뒤 infra 레포의 파일을 가져와 켭니다.
+자동 리뷰 workflow(`.github/workflows/claude.yml`)는 infra 레포의 파일을 가져와 이 레포에 맞게 고친 것입니다. 시크릿은 `CLAUDE_SETUP_TOKEN`, 모델은 `claude-opus-5-5`를 씁니다.
 
-- 켠 뒤에는 에이전트가 남긴 `이해도 확인:` inline comment에 같은 스레드에서 답변하고 resolve합니다.
+- 에이전트가 남긴 `이해도 확인:` inline comment에 같은 스레드에서 답변하고 resolve합니다.
 - 에이전트 작업 규칙은 `CLAUDE.md`(`AGENTS.md`는 symlink)를 기준으로 합니다.
 
 ---
