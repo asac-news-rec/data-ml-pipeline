@@ -132,7 +132,7 @@ Settings → Rules에서 확인하고, 강제할 수 없으면 위 규칙을 팀
 자동 리뷰 workflow(`.github/workflows/claude.yml`)는 infra 레포의 파일을 가져와 이 레포에 맞게 고친 것입니다. 시크릿은 `CLAUDE_SETUP_TOKEN`, 모델은 `claude-opus-5-5`를 씁니다.
 
 - 에이전트가 남긴 `이해도 확인:` inline comment에 같은 스레드에서 답변하고 resolve합니다.
-- 에이전트 작업 규칙은 `CLAUDE.md`(`AGENTS.md`는 symlink)를 기준으로 합니다.
+- 에이전트 작업 규칙은 `AGENTS.md`를 기준으로 합니다.
 
 ---
 
@@ -176,4 +176,4 @@ git diff --check
 - Repository: https://github.com/asac-news-rec/data-ml-pipeline
 - Issue Forms: `.github/ISSUE_TEMPLATE/*.yml`
 - PR template: `.github/PULL_REQUEST_TEMPLATE.md`
-- 에이전트 가이드: `CLAUDE.md`, `AGENTS.md`(symlink)
+- 에이전트 가이드: `AGENTS.md`
