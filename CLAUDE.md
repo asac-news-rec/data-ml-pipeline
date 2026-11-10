@@ -43,8 +43,8 @@
 - **이 저장소(`asac-news-rec/data-ml-pipeline`):** 행동 로그를 정제·집계해
   피처로 만들고, 그 피처로 추천 모델을 학습·평가하는 코드를 관리합니다.
 - **[현재]** README, 에이전트 하네스(`CLAUDE.md`, `AGENTS.md` symlink),
-  협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 1개
-  (`branch-name-policy.yml`), `.gitignore`만 있습니다. Python 코드와 DAG는
+  협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 2개
+  (`branch-name-policy.yml`, `claude.yml`), `.gitignore`만 있습니다. Python 코드와 DAG는
   아직 없습니다.
 - **[계획]** 아래 구조로 만들 예정입니다. 경로·이름은 바뀔 수 있습니다.
 
@@ -57,7 +57,7 @@ docs/          # 피처 정의서, 지표 문서 (필요할 때 생성)
 ```
 
 - **[미정]** Python 패키지 관리 도구, lint·테스트 도구, 추론 서버 코드를 둘
-  저장소, 이벤트 필드 이름 일부, 자동 리뷰 workflow(`claude.yml`) 사용 여부.
+  저장소, 이벤트 필드 이름 일부.
 - 설계 배경은 `blueprint` 저장소의 처리·피처·모델 페이지(`yunmo.html`)를
   참조합니다.
 - 저장소는 5개입니다:
