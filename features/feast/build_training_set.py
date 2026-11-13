@@ -1,13 +1,13 @@
-"""Feast get_historical_features로 학습 표를 만들고, make_features.py 결과와 같은지 대조한다.
+"""[파이프라인 구간: 피처 → 학습 데이터] Feast get_historical_features로 학습 표를 만든다.
 
 실행:  .venv/bin/python build_training_set.py [--ref <features.npz>]
 입력:  data/exposures.parquet   entity_df (reader_id, article_id, event_timestamp=노출 시각,
                                 request_ts, position, label, split)
 결과:  data/training_set.parquet  일반 9열 + u_emb(768 배열) + a_emb(768 배열) + label + split
        --ref를 주면 기존 피처 행렬 X(40,763 x 1,545)와 열마다 비교해 결과를 출력한다.
+행 수 검사(entity_df 행 = 결과 행, row_id 고유)는 --ref와 상관없이 항상 한다.
 """
 import argparse
-import json
 import time
 from pathlib import Path
 
@@ -21,31 +21,43 @@ DIM = 768
 HEAD = ["position", "article_age_h", "category", "hour", "hist_clicks", "hist_exposures",
         "hours_since_last_click", "already_opened", "already_seen"]
 FILL_ZERO = ["hist_clicks", "hist_exposures", "already_opened", "already_seen"]
+SERVICE = "ctr_lgbm_v1"
 
 
-def historical(store, entity_df):
+def historical(store: FeatureStore, entity_df: pd.DataFrame) -> pd.DataFrame:
     """get_historical_features. 로컬 file 오프라인 저장소의 중복 제거 문제를 피해 나눠 부른다.
 
     Feast 0.68 file(dask) 저장소는 feature view를 하나씩 붙이면서 '지금까지 나온 join key + 노출 시각'으로
     중복을 지운다. article_profile이 먼저 붙으면 (article_id, 시각)만 보게 되어,
     다른 독자가 같은 기사를 같은 ms에 본 노출 2건이 1건으로 합쳐진다 (가짜 로그 40,763행 중 1쌍).
     그래서 (article_id, 시각)이 겹치는 행은 다른 호출로 보낸다.
+    붙는 순서가 바뀌어 다른 키 조합으로 합쳐지면 이 회피책이 막지 못한다 → check_rows가 잡는다.
     """
     rank = entity_df.groupby(["article_id", "event_timestamp"]).cumcount()
     parts = []
     for r in sorted(rank.unique()):
         part = entity_df[rank == r]
         parts.append(store.get_historical_features(
-            entity_df=part, features=store.get_feature_service("ctr_lgbm_v1")).to_df())
+            entity_df=part, features=store.get_feature_service(SERVICE)).to_df())
     return pd.concat(parts, ignore_index=True)
 
 
-def to_matrix(df):
+def check_rows(entity_df: pd.DataFrame, df: pd.DataFrame) -> None:
+    """Feast가 행을 조용히 합치거나 늘리지 않았는지 확인한다."""
+    if len(df) != len(entity_df) or not df.row_id.is_unique \
+            or set(df.row_id) != set(entity_df.row_id):
+        lost = sorted(set(entity_df.row_id) - set(df.row_id))[:5]
+        raise RuntimeError(
+            f"get_historical_features 행 수 불일치: entity_df {len(entity_df):,}행 → 결과 {len(df):,}행, "
+            f"row_id 고유={df.row_id.is_unique}, 빠진 row_id 예={lost}")
+
+
+def to_matrix(df: pd.DataFrame) -> np.ndarray:
     """Feast 결과 → make_features.py와 같은 열 순서의 float32 행렬 (cold u_emb = NaN)."""
     head = df[HEAD].astype("float64").copy()
     head[FILL_ZERO] = head[FILL_ZERO].fillna(0)   # 행이 없으면 '아직 0번'
 
-    def stack(col):
+    def stack(col: str) -> np.ndarray:
         nan = np.full(DIM, np.nan, dtype=np.float32)
         return np.vstack([np.asarray(v, dtype=np.float32) if v is not None and len(v) else nan
                           for v in df[col]])
@@ -53,13 +65,12 @@ def to_matrix(df):
     return np.hstack([head.to_numpy(np.float32), stack("u_emb"), stack("a_emb")])
 
 
-def compare(X, ref_path):
+def compare(X: np.ndarray, ref_path: Path) -> None:
     ref = np.load(ref_path)
     R = ref["X"]
     print(f"\n대조: Feast {X.shape} vs make_features {R.shape}")
     if X.shape != R.shape:
-        print("  모양이 다르다")
-        return
+        raise RuntimeError(f"모양이 다르다: Feast {X.shape}, {ref_path} {R.shape}")
     names = HEAD + ["u_emb(768)", "a_emb(768)"]
     blocks = [slice(i, i + 1) for i in range(len(HEAD))]
     blocks += [slice(len(HEAD), len(HEAD) + DIM), slice(len(HEAD) + DIM, len(HEAD) + 2 * DIM)]
@@ -73,7 +84,7 @@ def compare(X, ref_path):
         print(f"  {name:24s} NaN 위치 같음={nan_same!s:5s} 최대 차이={diff:.2e} 다른 행={rows_bad}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ref", type=Path, help="make_features.py가 만든 features.npz")
     args = parser.parse_args()
@@ -84,7 +95,8 @@ def main():
 
     start = time.time()
     df = historical(store, entity_df).sort_values("row_id").reset_index(drop=True)
-    print(f"get_historical_features: {time.time() - start:.1f}초, 결과 {df.shape}")
+    check_rows(entity_df, df)
+    print(f"get_historical_features: {time.time() - start:.1f}초, 결과 {df.shape} (행 수 검사 통과)")
 
     df.to_parquet(DATA / "training_set.parquet", index=False)
     cold = df["u_emb"].isna() | df["u_emb"].map(lambda v: v is None or len(v) == 0)

@@ -1,7 +1,12 @@
-"""Feast 피처 정의. `feast apply`가 이 파일을 읽어 registry에 등록한다.
+"""[파이프라인 구간: 피처 → 학습 데이터·서빙 내보내기] Feast 피처 정의.
 
+`feast apply`가 이 파일을 읽어 registry에 등록한다.
 entity 2개(reader, article) → feature view 4개 + on-demand feature view 1개.
 열 이름과 뜻은 make_features.py의 HEAD_COLS와 같다.
+
+ttl은 모두 0(무제한)이다. 모든 피처가 '지금까지' 누적값이거나 고정값이라,
+마지막 사건이 오래됐다고 null(→ 0)로 바꾸면 make_features.py의 정의(전체 누적)와 어긋난다.
+'최근 N일' 같은 피처가 필요하면 원천 표에서 따로 계산해 새 피처로 둔다.
 """
 from datetime import timedelta
 from pathlib import Path
@@ -15,6 +20,7 @@ from feast.value_type import ValueType
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 KST_OFFSET_S = 9 * 3600
+NO_TTL = timedelta(0)   # Feast에서 ttl 0 = 기간 제한 없음
 
 # ── entity: 피처를 찾는 열쇠 ─────────────────────────────────────────
 reader = Entity(name="reader", join_keys=["reader_id"], value_type=ValueType.STRING,
@@ -32,7 +38,7 @@ def source(name):
 article_profile = FeatureView(
     name="article_profile",
     entities=[article],
-    ttl=timedelta(days=365),
+    ttl=NO_TTL,
     schema=[
         Field(name="a_emb", dtype=Array(Float32), description="e5-base 기사 임베딩 768"),
         Field(name="category", dtype=Int64, description="카테고리 코드"),
@@ -44,8 +50,7 @@ article_profile = FeatureView(
 reader_profile = FeatureView(
     name="reader_profile",
     entities=[reader],
-    # 마지막 클릭이 ttl보다 오래되면 비운다(cold 취급). 가짜 로그는 4일이라 30일이면 다 남는다.
-    ttl=timedelta(days=30),
+    ttl=NO_TTL,   # 오래된 클릭은 타임 디케이 가중치로 이미 약해진다. 기간으로 자르지 않는다.
     schema=[
         Field(name="u_emb", dtype=Array(Float32),
               description="클릭 기사 임베딩의 타임 디케이 가중 평균(반감기 24h) 768"),
@@ -58,7 +63,7 @@ reader_profile = FeatureView(
 reader_activity = FeatureView(
     name="reader_activity",
     entities=[reader],
-    ttl=timedelta(days=30),
+    ttl=NO_TTL,
     schema=[Field(name="hist_exposures", dtype=Int64, description="지금까지 유효 노출 수")],
     source=source("reader_activity"),
 )
@@ -66,7 +71,7 @@ reader_activity = FeatureView(
 reader_article = FeatureView(
     name="reader_article",
     entities=[reader, article],
-    ttl=timedelta(days=30),
+    ttl=NO_TTL,
     schema=[
         Field(name="already_opened", dtype=Int64, description="이 기사를 전에 열었나"),
         Field(name="already_seen", dtype=Int64, description="이 기사를 전에 유효 노출로 봤나"),

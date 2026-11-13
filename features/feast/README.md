@@ -14,13 +14,15 @@ PCTR LightGBM 모델의 피처(일반 9 + 유저 임베딩 768 + 기사 임베�
 
 ## 실행 (WSL)
 
+`uv`와 `requirements.txt`는 이 프로토타입에서만 쓴다. 저장소 전체의 패키지 관리 도구는 아직 [미정]이다.
+
 ```bash
 cd features/feast
 uv venv -p 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
-.venv/bin/python prepare_sources.py --src <final-project/virtual_reader 경로>   # 원천 표 5개 (약 1.5분)
+.venv/bin/python prepare_sources.py --src <final-project/virtual_reader 경로>   # 원천 표 5개 (약 1.5분), --valid-from으로 검증 시작 시각 지정
 cd feature_repo && ../.venv/bin/feast apply && cd ..                           # 정의 등록
 .venv/bin/python build_training_set.py --ref <virtual_reader/features/features.npz>  # 학습 표 + 대조 (약 1분)
-.venv/bin/python online_demo.py                                                # materialize + 온라인 조회
+.venv/bin/python online_demo.py                                                # materialize + 온라인 조회, --now로 '지금' 지정
 ```
 
 ## 파일
@@ -48,6 +50,8 @@ cd feature_repo && ../.venv/bin/feast apply && cd ..                           #
 - `u_emb`는 클릭 때만 바뀐다. 타임 디케이 가중치 `0.5 ** (Δt/24h)`는 분자·분모에 같이 곱해져 약분된다.
 - `position`은 요청값이다. 학습 땐 entity_df 열, 서빙 땐 요청에서 받는다.
 - 행이 없으면 null이다. `hist_*`, `already_*`는 0으로, `u_emb`는 NaN(cold)으로 채운다 (`build_training_set.to_matrix`).
+- ttl은 모두 0(무제한)이다. 피처가 전부 '지금까지' 누적값이라, 기간으로 자르면 오래 쉬다 온 독자가 0으로 학습된다.
+- 같은 (entity 키, 시각) 행이 여러 개면 Feast가 어느 행을 고를지 정해져 있지 않아, 원천 표를 쓸 때 마지막 행만 남긴다.
 
 ## 결과 (2026-11-13, 가짜 로그 11/3~11/6 12시)
 
@@ -60,4 +64,7 @@ cd feature_repo && ../.venv/bin/feast apply && cd ..                           #
 - Feast 0.68 file 오프라인 저장소는 feature view를 붙일 때마다 '지금까지 나온 join key + 시각'으로 중복을 지운다.
   다른 독자가 같은 기사를 같은 ms에 본 노출 2건이 1건으로 합쳐졌다(40,763행 중 1쌍).
   `build_training_set.historical()`이 그런 행을 따로 호출해 피한다. BigQuery 저장소에서도 같은지는 아직 확인하지 않았다.
+  회피책이 못 막는 경우를 위해 `check_rows()`가 결과 행 수와 row_id를 항상 검사하고, 다르면 멈춘다.
+- materialize 범위는 view의 ttl보다 짧으면 안 된다. 짧으면 오프라인엔 있고 온라인엔 없는 값이 생긴다.
+  `online_demo.py`는 원천 표의 가장 이른 시각부터 전체를 쓴다. 서빙 DAG는 첫 적재만 전체, 이후 `materialize_incremental`로 한다.
 - on-demand feature view는 Feast가 "experimental"로 표시한다. 오프라인에서 행이 많으면 느릴 수 있다.
