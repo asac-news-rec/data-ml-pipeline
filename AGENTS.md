@@ -44,7 +44,8 @@
   피처로 만들고, 그 피처로 추천 모델을 학습·평가하는 코드를 관리합니다.
 - **[현재]** README, 에이전트 하네스(`AGENTS.md`),
   협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 2개
-  (`branch-name-policy.yml`, `claude.yml`), `.gitignore`만 있습니다. Python 코드와 DAG는
+  (`branch-name-policy.yml`, `claude.yml`), `.gitignore`가 있습니다. Python 코드는
+  `features/feast/`(Feast 피처 스토어 로컬 프로토타입, parquet + SQLite)뿐이고, DAG는
   아직 없습니다.
 - **[계획]** 아래 구조로 만들 예정입니다. 경로·이름은 바뀔 수 있습니다.
 
