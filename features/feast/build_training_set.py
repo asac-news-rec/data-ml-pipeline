@@ -24,6 +24,27 @@ FILL_ZERO = ["hist_clicks", "hist_exposures", "already_opened", "already_seen"]
 SERVICE = "ctr_lgbm_v1"
 
 
+def use_rest_download() -> None:
+    """[임시] BigQuery 결과를 Storage Read API 대신 REST로 내려받게 한다.
+
+    Feast는 결과를 QueryJob.to_arrow()로 받고, 이 함수는 기본으로 Storage Read API를 쓴다.
+    그 API는 bigquery.readsessions.create 권한(roles/bigquery.readSessionUser)이 필요한데
+    2026-11-14 기준 우리 계정에 없어 403이 난다. 권한이 생기면 이 함수를 지운다.
+    REST는 느리다 (임베딩 1,536열 × 4만 행이면 수 분).
+    """
+    from google.cloud.bigquery.job import QueryJob
+    original = QueryJob.to_arrow
+    if getattr(original, "_rest_only", False):
+        return
+
+    def to_arrow(self, *args, **kwargs):
+        kwargs["create_bqstorage_client"] = False
+        return original(self, *args, **kwargs)
+
+    to_arrow._rest_only = True
+    QueryJob.to_arrow = to_arrow
+
+
 def historical(store: FeatureStore, entity_df: pd.DataFrame) -> pd.DataFrame:
     """get_historical_features. 로컬 file 오프라인 저장소의 중복 제거 문제를 피해 나눠 부른다.
 
@@ -32,7 +53,12 @@ def historical(store: FeatureStore, entity_df: pd.DataFrame) -> pd.DataFrame:
     다른 독자가 같은 기사를 같은 ms에 본 노출 2건이 1건으로 합쳐진다 (가짜 로그 40,763행 중 1쌍).
     그래서 (article_id, 시각)이 겹치는 행은 다른 호출로 보낸다.
     붙는 순서가 바뀌어 다른 키 조합으로 합쳐지면 이 회피책이 막지 못한다 → check_rows가 잡는다.
+    BigQuery 저장소는 이 문제가 없어 한 번에 부른다 (check_rows로 확인).
     """
+    if store.config.offline_store.type != "file":
+        use_rest_download()
+        return store.get_historical_features(
+            entity_df=entity_df, features=store.get_feature_service(SERVICE)).to_df()
     rank = entity_df.groupby(["article_id", "event_timestamp"]).cumcount()
     parts = []
     for r in sorted(rank.unique()):
@@ -87,18 +113,25 @@ def compare(X: np.ndarray, ref_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ref", type=Path, help="make_features.py가 만든 features.npz")
+    parser.add_argument("--yaml", default="feature_store.yaml",
+                        help="feature_repo 안의 설정 파일. BigQuery는 feature_store.bq.yaml "
+                             "(FEAST_SOURCE=bigquery와 같이 쓴다)")
     args = parser.parse_args()
 
-    store = FeatureStore(repo_path=str(HERE / "feature_repo"))
+    repo = HERE / "feature_repo"
+    store = FeatureStore(repo_path=str(repo), fs_yaml_file=repo / args.yaml)
+    kind = store.config.offline_store.type
+    out = DATA / ("training_set.parquet" if kind == "file" else f"training_set_{kind}.parquet")
     entity_df = pd.read_parquet(DATA / "exposures.parquet")
-    print(f"entity_df: {len(entity_df):,}행 (유효 노출 1건 = 1행)")
+    print(f"오프라인 저장소: {kind}, entity_df: {len(entity_df):,}행 (유효 노출 1건 = 1행)")
 
     start = time.time()
     df = historical(store, entity_df).sort_values("row_id").reset_index(drop=True)
     check_rows(entity_df, df)
     print(f"get_historical_features: {time.time() - start:.1f}초, 결과 {df.shape} (행 수 검사 통과)")
 
-    df.to_parquet(DATA / "training_set.parquet", index=False)
+    df.to_parquet(out, index=False)
+    print(f"  저장: {out.name}")
     cold = df["u_emb"].isna() | df["u_emb"].map(lambda v: v is None or len(v) == 0)
     print(f"  학습 {int((df.split == 'train').sum()):,}행 / 검증 {int((df.split == 'valid').sum()):,}행,"
           f" CTR {df.label.mean():.3%}, cold(u_emb 없음) {cold.mean():.1%}")

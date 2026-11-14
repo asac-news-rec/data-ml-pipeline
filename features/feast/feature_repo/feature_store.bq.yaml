@@ -1,0 +1,16 @@
+# 오프라인만 BigQuery로 바꾼 설정. registry·온라인은 로컬 파일(로컬 설정과 섞이지 않게 파일 이름을 다르게 둔다).
+# 쓰는 법 (feature_repo 안에서):
+#   FEAST_SOURCE=bigquery ../.venv/bin/feast -f feature_store.bq.yaml apply
+# 원천 표는 먼저 ../upload_to_bq.py로 dev_yoonmo 데이터셋에 올려 둔다.
+project: news_rec
+provider: gcp
+registry: ../data/registry_bq.db
+offline_store:
+  type: bigquery
+  project_id: final-project-513508
+  dataset: dev_yoonmo          # get_historical_features가 entity_df를 임시 표로 올리는 곳
+  location: asia-northeast3
+online_store:
+  type: sqlite
+  path: ../data/online_store_bq.db
+entity_key_serialization_version: 3
