@@ -1,7 +1,7 @@
 # 오프라인만 BigQuery로 바꾼 설정. registry·온라인은 로컬 파일(로컬 설정과 섞이지 않게 파일 이름을 다르게 둔다).
 # 쓰는 법 (feature_repo 안에서):
 #   FEAST_SOURCE=bigquery ../.venv/bin/feast -f feature_store.bq.yaml apply
-# 원천 표는 먼저 ../upload_to_bq.py로 dev_yoonmo 데이터셋에 올려 둔다.
+# source table은 먼저 ../upload_to_bq.py로 dev_yoonmo 데이터셋에 올려 둔다.
 project: news_rec
 provider: gcp
 registry: ../data/registry_bq.db

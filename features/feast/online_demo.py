@@ -3,7 +3,7 @@
 실행:  .venv/bin/python online_demo.py [--now 2026-11-06T12:00:00+09:00] [--reader <reader_id>] [--k 10]
 순서:
   1. materialize: 오프라인 표에서 entity별 '가장 최근 값'만 골라 온라인 저장소(SQLite/Valkey)에 쓴다.
-     ttl이 무제한이므로 범위는 원천 표의 가장 이른 시각부터 --now까지 전체다.
+     ttl이 무제한이므로 범위는 source table의 가장 이른 시각부터 --now까지 전체다.
      (실서비스는 첫 적재만 전체로 하고 이후엔 materialize_incremental로 지난 적재 뒤 변경분만 쓴다.)
   2. get_online_features: 독자 1명 + 후보 기사 k건의 피처를 온라인 저장소에서 읽는다.
   3. 같은 (독자, 기사, 시각)을 get_historical_features로도 뽑아 두 값이 같은지 본다
@@ -26,7 +26,7 @@ SOURCES = ["article_profile", "reader_profile", "reader_activity", "reader_artic
 
 
 def earliest_source_time() -> datetime:
-    """원천 표 4개 중 가장 이른 event_timestamp. materialize 시작점으로 쓴다."""
+    """source table 4개 중 가장 이른 event_timestamp. materialize 시작점으로 쓴다."""
     first = min(pd.read_parquet(DATA / f"{n}.parquet", columns=["event_timestamp"]).event_timestamp.min()
                 for n in SOURCES)
     return first.to_pydatetime()

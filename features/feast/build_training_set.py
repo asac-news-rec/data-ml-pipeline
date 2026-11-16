@@ -1,4 +1,4 @@
-"""[파이프라인 구간: 피처 → 학습 데이터] Feast get_historical_features로 학습 표를 만든다.
+"""[파이프라인 구간: 피처 → 학습 데이터] Feast get_historical_features로 training set을 만든다.
 
 실행:  .venv/bin/python build_training_set.py [--ref <features.npz>]
 입력:  data/exposures.parquet   entity_df (reader_id, article_id, event_timestamp=노출 시각,

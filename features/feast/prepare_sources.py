@@ -1,4 +1,4 @@
-"""[파이프라인 구간: 정제·집계 → 피처] 가짜 로그(raw) → Feast가 읽는 원천 표(parquet) 5개를 만든다.
+"""[파이프라인 구간: 정제·집계 → 피처] 가짜 로그(raw) → Feast가 읽는 source table(parquet) 5개를 만든다.
 
 실서비스에서는 이 스크립트가 하는 일을 Airflow 정제·집계 단계가 BigQuery 표로 만든다.
 여기서는 로컬 parquet으로 같은 모양의 표를 만든다.
@@ -10,7 +10,7 @@
        data/reader_profile.parquet    클릭 1건 = 1행 (그 클릭 직후의 u_emb 768, hist_clicks, last_click_ts)
        data/reader_activity.parquet   노출 1건 = 1행 (그 노출 직후의 hist_exposures)
        data/reader_article.parquet    (독자, 기사) 상태가 바뀔 때마다 1행 (already_opened, already_seen)
-       data/exposures.parquet         학습 표의 뼈대(entity_df). 유효 노출 1건 = 1행 + 라벨 + split
+       data/exposures.parquet         training set의 뼈대(entity_df). 유효 노출 1건 = 1행 + 라벨 + split
 
 피처 행의 event_timestamp = 사건 시각 + 1마이크로초.
 Feast는 '피처 시각 <= 노출 시각'인 행 중 가장 최근 것을 붙인다(point-in-time join).
@@ -130,7 +130,7 @@ def build(served: dict[str, Row], actions: list[Row], emb: dict[str, np.ndarray]
         seen: set[str] = set()
         for t, kind, imp in evs:
             aid = imp["article_id"]
-            if kind == 0:   # 유효 노출: 학습 표 1행 + 노출 수 스냅샷
+            if kind == 0:   # 유효 노출: training set 1행 + 노출 수 스냅샷
                 exposures.append({
                     "row_id": len(exposures),
                     "impression_id": imp["impression_id"],

@@ -6,7 +6,7 @@ entity 2개(reader, article) → feature view 4개 + on-demand feature view 1개
 
 ttl은 모두 0(무제한)이다. 모든 피처가 '지금까지' 누적값이거나 고정값이라,
 마지막 사건이 오래됐다고 null(→ 0)로 바꾸면 make_features.py의 정의(전체 누적)와 어긋난다.
-'최근 N일' 같은 피처가 필요하면 원천 표에서 따로 계산해 새 피처로 둔다.
+'최근 N일' 같은 피처가 필요하면 source table에서 따로 계산해 새 피처로 둔다.
 """
 import os
 from datetime import timedelta
@@ -31,7 +31,7 @@ article = Entity(name="article", join_keys=["article_id"], value_type=ValueType.
                  description="기사 (로그의 article_id)")
 
 
-# 원천 표 위치. FEAST_SOURCE=bigquery면 BigQuery 표(upload_to_bq.py로 올린 것), 아니면 로컬 parquet.
+# source table 위치. FEAST_SOURCE=bigquery면 BigQuery 표(upload_to_bq.py로 올린 것), 아니면 로컬 parquet.
 # 정의(피처 이름·타입·entity)는 같고 원천만 바뀐다. BigQuery 쪽 설정은 feature_store.bq.yaml.
 SOURCE_KIND = os.environ.get("FEAST_SOURCE", "file")
 BQ_DATASET = os.environ.get("FEAST_BQ_DATASET", "final-project-513508.dev_yoonmo")
@@ -45,7 +45,7 @@ def source(name: str):
                       timestamp_field="event_timestamp")
 
 
-# ── feature view: 원천 표 1개 = 피처 묶음 1개 ───────────────────────────
+# ── feature view: source table 1개 = 피처 묶음 1개 ───────────────────────────
 article_profile = FeatureView(
     name="article_profile",
     entities=[article],
