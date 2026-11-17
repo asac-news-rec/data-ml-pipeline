@@ -1,8 +1,9 @@
 """[파이프라인 구간: 피처 → 학습 데이터] Feast get_historical_features로 training set을 만든다.
 
 실행:  .venv/bin/python build_training_set.py [--ref <features.npz>]
-입력:  data/exposures.parquet   entity_df (reader_id, article_id, event_timestamp=노출 시각,
-                                request_ts, position, label, split)
+입력:  data/exposures.parquet   entity_df (reader_id, article_id, event_timestamp=served 시각(기본) 또는 노출 시각,
+                                request_ts, position, label, split). prepare_sources.py --base 참고
+       --ref 대조는 --base exposure로 만든 entity_df(40,763행)일 때만 모양이 맞는다.
 결과:  data/training_set.parquet  일반 9열 + u_emb(768 배열) + a_emb(768 배열) + label + split
        --ref를 주면 기존 피처 행렬 X(40,763 x 1,545)와 열마다 비교해 결과를 출력한다.
 행 수 검사(entity_df 행 = 결과 행, row_id 고유)는 --ref와 상관없이 항상 한다.
@@ -59,7 +60,11 @@ def historical(store: FeatureStore, entity_df: pd.DataFrame) -> pd.DataFrame:
         use_rest_download()
         return store.get_historical_features(
             entity_df=entity_df, features=store.get_feature_service(SERVICE)).to_df()
-    rank = entity_df.groupby(["article_id", "event_timestamp"]).cumcount()
+    # impression 기준이면 한 요청의 카드 N장이 (reader_id, 시각)을 공유한다 → 그것도 나눈다.
+    # 한 번의 호출 안에서는 (article_id, 시각)과 (reader_id, 시각)이 모두 겹치지 않게 한다.
+    by_reader = entity_df.groupby(["reader_id", "event_timestamp"]).cumcount()
+    by_article = entity_df.assign(_r=by_reader).groupby(["_r", "article_id", "event_timestamp"]).cumcount()
+    rank = by_reader * 1000 + by_article
     parts = []
     for r in sorted(rank.unique()):
         part = entity_df[rank == r]
@@ -123,7 +128,7 @@ def main() -> None:
     kind = store.config.offline_store.type
     out = DATA / ("training_set.parquet" if kind == "file" else f"training_set_{kind}.parquet")
     entity_df = pd.read_parquet(DATA / "exposures.parquet")
-    print(f"오프라인 저장소: {kind}, entity_df: {len(entity_df):,}행 (유효 노출 1건 = 1행)")
+    print(f"오프라인 저장소: {kind}, entity_df: {len(entity_df):,}행")
 
     start = time.time()
     df = historical(store, entity_df).sort_values("row_id").reset_index(drop=True)

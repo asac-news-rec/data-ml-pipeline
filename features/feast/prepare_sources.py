@@ -10,7 +10,17 @@
        data/reader_profile.parquet    클릭 1건 = 1행 (그 클릭 직후의 u_emb 768, hist_clicks, last_click_ts)
        data/reader_activity.parquet   노출 1건 = 1행 (그 노출 직후의 hist_exposures)
        data/reader_article.parquet    (독자, 기사) 상태가 바뀔 때마다 1행 (already_opened, already_seen)
-       data/exposures.parquet         training set의 뼈대(entity_df). 유효 노출 1건 = 1행 + 라벨 + split
+       data/exposures.parquet         training set의 뼈대(entity_df) + label + split.
+                                      --base impression(기본): impression(served) 1건 = 1행, 시각 = served_at
+                                      --base exposure: 유효 노출(exposure) 1건 = 1행, 시각 = 노출 시작 (11/15 이전 방식)
+
+label (11/15 멘토링): PCTR = P(click | impression). 그래서 negative는 click 없는 impression 전부다.
+화면에 나오지 않은 impression(exposure 없음)도 label 0으로 넣는다.
+
+fraud click 제거 (11/15 멘토링): 노출 직후 MIN_CLICK_GAP_S(0.1초) 안에 찍힌 article_open은 사람이 누른 click이 아니다.
+그 click은 없었던 것으로 보고 label과 피처(u_emb, hist_clicks 등) 모두에서 뺀다.
+기준 시각은 그 impression의 첫 exposure 시작, exposure가 없으면 served_at이다.
+[임시] 실서비스에서는 앞단 데이터 파이프라인(정제 단계)이 걸러 내고, 그러면 이 함수는 지운다.
 
 피처 행의 event_timestamp = 사건 시각 + 1마이크로초.
 Feast는 '피처 시각 <= 노출 시각'인 행 중 가장 최근 것을 붙인다(point-in-time join).
@@ -40,6 +50,7 @@ HERE = Path(__file__).parent
 DATA = HERE / "data"
 HALF_LIFE_H = 24.0
 EPS = pd.Timedelta(microseconds=1)
+MIN_CLICK_GAP_S = 0.1
 
 Row = dict[str, Any]
 Event = tuple[float, int, Row]
@@ -77,6 +88,49 @@ def load(src: Path) -> tuple[dict[str, Row], list[Row], dict[str, Row], dict[str
     if missing:
         raise SystemExit(f"{emb_dir}에 임베딩이 없는 기사 {len(missing)}건: {missing[:3]}")
     return served, actions, articles, emb
+
+
+def remove_fraud_clicks(served: dict[str, Row], actions: list[Row]) -> list[Row]:
+    """노출 직후 MIN_CLICK_GAP_S 안의 article_open을 뺀다. 기준: 첫 exposure 시작, 없으면 served_at."""
+    first_exposure: dict[str, float] = {}
+    for a in actions:
+        if a["event_type"] == "exposure":
+            t = ts(a["event_time"])
+            imp = a["impression_id"]
+            first_exposure[imp] = min(first_exposure.get(imp, t), t)
+    kept, dropped = [], 0
+    for a in actions:
+        if a["event_type"] == "article_open" and a["impression_id"] in served:
+            imp = a["impression_id"]
+            base = first_exposure.get(imp, ts(served[imp]["served_at"]))
+            if ts(a["event_time"]) - base < MIN_CLICK_GAP_S:
+                dropped += 1
+                continue
+        kept.append(a)
+    print(f"fraud click 제거: {dropped:,}건 (노출 뒤 {MIN_CLICK_GAP_S}초 안 article_open)")
+    return kept
+
+
+def impression_rows(served: dict[str, Row], actions: list[Row], valid_from: float) -> pd.DataFrame:
+    """entity_df: impression(served) 1건 = 1행. label = 그 impression에 article_open이 있으면 1."""
+    opened = {a["impression_id"] for a in actions if a["event_type"] == "article_open"}
+    exposed = {a["impression_id"] for a in actions if a["event_type"] == "exposure"}
+    rows = []
+    for imp in sorted(served.values(), key=lambda r: (ts(r["served_at"]), r["reader_id"], r["position"])):
+        t = ts(imp["served_at"])
+        rows.append({
+            "row_id": len(rows),
+            "impression_id": imp["impression_id"],
+            "reader_id": imp["reader_id"],
+            "article_id": imp["article_id"],
+            "event_timestamp": to_time(t),
+            "request_ts": t,
+            "position": imp["position"],
+            "exposed": int(imp["impression_id"] in exposed),   # 피처 아님. 분석용
+            "label": int(imp["impression_id"] in opened),
+            "split": "valid" if t >= valid_from else "train",
+        })
+    return pd.DataFrame(rows)
 
 
 def article_table(articles: dict[str, Row], emb: dict[str, np.ndarray]) -> tuple[pd.DataFrame, list[str]]:
@@ -181,15 +235,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--src", type=Path, required=True, help="virtual_reader 폴더")
     parser.add_argument("--valid-from", default="2026-11-06T00:00:00+09:00",
-                        help="이 시각 이후 노출은 split=valid (ISO 8601, 시간대 포함)")
+                        help="이 시각 이후 행은 split=valid (ISO 8601, 시간대 포함)")
+    parser.add_argument("--base", choices=["impression", "exposure"], default="impression",
+                        help="entity_df 1행의 기준. impression=served 전부(기본), exposure=유효 노출만")
     args = parser.parse_args()
     valid_from = datetime.fromisoformat(args.valid_from)
     if valid_from.tzinfo is None:
         raise SystemExit(f"--valid-from에 시간대가 없다: {args.valid_from}")
 
     served, actions, articles, emb = load(args.src)
+    actions = remove_fraud_clicks(served, actions)
     article, categories = article_table(articles, emb)
     profile, activity, pair, exposures = build(served, actions, emb, valid_from.timestamp())
+    if args.base == "impression":
+        exposures = impression_rows(served, actions, valid_from.timestamp())
+    n, pos = len(exposures), int(exposures.label.sum())
+    print(f"entity_df 기준={args.base}: {n:,}행, label 1={pos:,} ({pos / n:.3%}), label 0={n - pos:,}")
 
     DATA.mkdir(exist_ok=True)
     tables = {"article_profile": article, "reader_profile": profile,
