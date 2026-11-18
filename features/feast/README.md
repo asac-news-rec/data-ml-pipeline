@@ -15,7 +15,7 @@ source table(parquet / BigQuery dev_yoonmo.* / [계획] feat.*)
 
 ## 실행 (WSL)
 
-`uv`와 `requirements.txt`는 이 프로토타입에서만 쓴다. 저장소 전체의 패키지 관리 도구는 아직 [미정]이다.
+로컬 프로토타입은 `requirements.txt`를 쓴다. Airflow 작업 이미지는 저장소 루트의 `pyproject.toml`에 있는 `airflow-dag`/`train` 묶음으로 만든다.
 
 ```bash
 cd features/feast
@@ -47,10 +47,24 @@ cd feature_repo && ../.venv/bin/feast -f feature_store.bq.yaml apply && cd ..
 - `FEAST_SOURCE`를 켠 셸에서 로컬 설정으로 `feast apply`하면 로컬 registry에 BigQuery 원천이 등록된다. 로컬로 돌아갈 땐 `unset FEAST_SOURCE`.
 - 다른 데이터셋을 쓰면 `upload_to_bq.py --dataset`, `FEAST_BQ_DATASET`(source table 위치), `feature_store.bq.yaml`의 `dataset`(entity_df 임시 표 위치)을 같이 바꾼다.
 
+### Airflow에서 materialize (GCP)
+
+Feast는 Airflow 이미지에 넣지 않는다. Airflow 이미지의 `google-cloud-storage` 3.17.1과 충돌하고 Python 버전도 다르기 때문이다. 대신 Python 3.12 작업 이미지를 `KubernetesPodOperator`로 띄운다.
+
+- 작업 이미지: 저장소 루트 `pyproject.toml`의 `airflow-dag` 묶음 (`uv sync --extra airflow-dag`)
+- 작업 이미지는 저장소를 `/app`에 넣는다. DAG는 `python /app/features/feast/materialize.py`를 실행한다.
+- DAG: `dags/materialize_feast.py`, 스크립트: `features/feast/materialize.py`
+- 설정: `feature_store.gcp.yaml` (GCS registry + Valkey online store)
+- Airflow 이미지에 `apache-airflow-providers-cncf-kubernetes`가 필요하다. 로컬 Airflow 3.4.0에는 없어서 DAG import는 클러스터에서 확인한다.
+- Airflow Variables: `feast_registry_path`, `valkey_host`, `gcp_project_id`, `feast_bq_dataset`, `feast_bq_temp_dataset`, `feast_full_materialize`, `feast_materialize_start`
+- 첫 실행은 `feast_full_materialize=true`, `feast_materialize_start=2026-11-03T00:00:00+09:00`로 한 번 돌리고, 이후 false로 둔다.
+- 지금은 `dev_yoonmo`를 쓴다. `dev_feast` 이름 변경은 MVP 이후.
+
 ## 파일
 
 | 파일 | 하는 일 |
 | --- | --- |
+| `materialize.py` | Airflow 작업 이미지에서 `FeatureStore.materialize`를 실행 |
 | `prepare_sources.py` | 가짜 로그 → source table parquet 5개 + entity_df. `--base impression`(기본)이면 impression 1건 = 1행, `exposure`면 유효 노출 1건 = 1행. [계획] Airflow 집계 단계가 BigQuery에 같은 표를 만든다 |
 | `feature_repo/definitions.py` | entity 2개, feature view 4개, on-demand feature view 1개, feature service 1개 |
 | `feature_repo/feature_store.yaml` | 로컬 설정 (file + sqlite) |
@@ -59,6 +73,9 @@ cd feature_repo && ../.venv/bin/feast -f feature_store.bq.yaml apply && cd ..
 | `feature_repo/feature_store.gcp.yaml.example` | [계획] BigQuery + Valkey 설정 예시 (미실행) |
 | `feature_repo/feature_store.ci.yaml` | GitHub Actions의 `feast plan`/`apply`용 설정 (GCS registry, BigQuery offline, SQLite online) |
 | `.github/workflows/feast-apply.yml` | PR이면 `feast plan`, main 머지면 GCS registry에 `feast apply`. Settings variables를 넣기 전에는 건너뛴다 |
+| `feature_repo/feature_store.gcp.yaml` | GCP 운영 설정 (GCS registry + Valkey online) |
+| `../../dags/materialize_feast.py` | `KubernetesPodOperator`로 materialize 작업 이미지를 띄우는 DAG |
+| `../../pyproject.toml` | 작업 이미지 의존성 (`airflow-dag`/`train` 묶음) |
 | `build_training_set.py` | `get_historical_features`로 training set을 만들고 `make_features.py` 결과와 대조 |
 | `online_demo.py` | `materialize` → `get_online_features` → 같은 시각 오프라인 값과 비교 |
 

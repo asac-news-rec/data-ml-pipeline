@@ -1,0 +1,30 @@
+[project]
+name = "data-ml-pipeline"
+version = "0.1.0"
+description = "ASAC news recommendation data/ML pipeline"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[project.optional-dependencies]
+# Airflow가 띄우는 Python 3.12 작업 이미지 (Feast materialize)
+airflow-dag = [
+  "feast[gcp,redis]==0.68.0",
+  "google-cloud-bigquery",
+  "db-dtypes",
+  "pandas",
+  "pyarrow",
+  "numpy",
+]
+# 학습 Job 이미지 (LightGBM, MLflow)
+train = [
+  "feast[gcp,redis]==0.68.0",
+  "lightgbm",
+  "scikit-learn",
+  "mlflow",
+  "pandas",
+  "pyarrow",
+  "numpy",
+]
+
+[tool.uv]
+package = false
