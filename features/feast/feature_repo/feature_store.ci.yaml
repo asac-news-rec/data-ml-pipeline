@@ -1,0 +1,20 @@
+# GitHub Actions(feast-apply.yml)에서 feast plan / apply 할 때 쓰는 설정.
+# 하는 일: definitions.py의 정의 목록을 GCS registry에 적는다. 데이터는 옮기지 않는다.
+#   - registry: GCS 파일. Airflow(materialize)와 추론 서버가 같은 파일을 읽는다.
+#   - offline_store: apply가 source table(BigQuery 표)이 있는지 확인할 때 쓴다.
+#   - online_store: CI는 Valkey(비공개 GKE)에 붙지 않는다. Feast는 feature view를 지울 때만
+#     온라인 저장소에 접속하므로, CI에서는 러너 안의 임시 SQLite를 둔다.
+#     그래서 feature view를 지우면 Valkey에 옛 값이 남는다(서빙은 registry에 없는 view를 읽지 않음).
+# 값은 워크플로의 환경변수로 받는다 (Feast가 ${VAR}를 읽을 때 바꿔 넣는다).
+project: news_rec
+provider: gcp
+registry: ${FEAST_REGISTRY_PATH}
+offline_store:
+  type: bigquery
+  project_id: ${GCP_PROJECT_ID}
+  dataset: ${FEAST_BQ_TEMP_DATASET}
+  location: asia-northeast3
+online_store:
+  type: sqlite
+  path: /tmp/feast_ci_online.db
+entity_key_serialization_version: 3

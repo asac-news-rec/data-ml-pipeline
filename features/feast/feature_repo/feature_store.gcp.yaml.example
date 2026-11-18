@@ -1,0 +1,17 @@
+# [계획] 실제 GCP로 옮길 때의 설정 예시. BigQuery는 11/18에 실행 확인했고, Valkey 연결은 접속 정보를 받은 뒤 확인한다.
+# 쓰는 법: 이 파일을 feature_store.yaml로 복사하고, definitions.py의 FileSource를 BigQuerySource로 바꾼다.
+project: news_rec
+provider: gcp
+# registry = 피처 정의 목록 파일. 학습(Airflow)과 추론 서버가 같은 파일을 읽어야 한다. 위치는 [미정]
+registry: gs://<project_id>-model-artifacts/feast/registry.pb
+offline_store:
+  type: bigquery
+  project_id: <project_id>
+  dataset: feat              # get_historical_features가 entity_df를 임시 표로 올리는 데이터셋
+  location: asia-northeast3
+online_store:
+  type: redis                # Valkey는 Redis 프로토콜 호환이라 redis 타입으로 붙는다 (Valkey 실물로는 미검증)
+  # 현재 dev Valkey는 인증 없는 단독 구성이다. 인증을 켤 때만 password를 붙인다.
+  connection_string: "${VALKEY_HOST}:6379"
+  # 인증을 켜면: connection_string: "${VALKEY_HOST}:6379,password=${VALKEY_PASSWORD}"
+entity_key_serialization_version: 3

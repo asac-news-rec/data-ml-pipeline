@@ -1,0 +1,71 @@
+name: Feast apply
+
+# definitions.py가 바뀌면
+#   - PR: feast plan으로 무엇이 바뀌는지 보여 준다 (registry는 그대로).
+#   - main 머지: feast apply로 GCS registry에 정의를 적는다.
+on:
+  pull_request:
+    paths:
+      - "features/feast/feature_repo/**"
+      - "features/feast/requirements.txt"
+      - ".github/workflows/feast-apply.yml"
+  push:
+    branches: [main]
+    paths:
+      - "features/feast/feature_repo/**"
+      - "features/feast/requirements.txt"
+      - ".github/workflows/feast-apply.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # GCP Workload Identity Federation 인증에 필요
+
+# apply 두 개가 동시에 registry를 쓰지 않게 한다
+concurrency:
+  group: feast-registry
+  cancel-in-progress: false
+
+jobs:
+  feast:
+    # Settings > Variables에 값이 다 들어가기 전에는 건너뛴다 (없으면 Feast가 빈 경로로 실패한다)
+    if: >-
+      vars.GCP_PROJECT_ID != '' && vars.FEAST_REGISTRY_PATH != '' &&
+      vars.GCP_WIF_PROVIDER != '' && vars.GCP_FEAST_SA != '' &&
+      vars.FEAST_BQ_TEMP_DATASET != '' && vars.FEAST_BQ_DATASET != ''
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: features/feast/feature_repo
+    env:
+      # 값은 저장소 Settings > Variables에 둔다 (비밀값 아님)
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      FEAST_REGISTRY_PATH: ${{ vars.FEAST_REGISTRY_PATH }}       # 예: gs://<model-artifacts 버킷>/feast/registry.pb
+      FEAST_BQ_TEMP_DATASET: ${{ vars.FEAST_BQ_TEMP_DATASET }}   # 예: feat
+      FEAST_SOURCE: bigquery
+      FEAST_BQ_DATASET: ${{ vars.GCP_PROJECT_ID }}.${{ vars.FEAST_BQ_DATASET }}  # source table이 있는 데이터셋
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_FEAST_SA }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: features/feast/requirements.txt
+
+      - name: Install Feast
+        run: pip install -r ../requirements.txt
+
+      - name: feast plan (PR)
+        if: github.event_name == 'pull_request'
+        run: feast -f feature_store.ci.yaml plan
+
+      - name: feast apply (main)
+        if: github.event_name != 'pull_request'
+        run: feast -f feature_store.ci.yaml apply
