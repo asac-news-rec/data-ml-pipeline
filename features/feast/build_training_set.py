@@ -25,27 +25,6 @@ FILL_ZERO = ["hist_clicks", "hist_exposures", "already_opened", "already_seen"]
 SERVICE = "ctr_lgbm_v1"
 
 
-def use_rest_download() -> None:
-    """[임시] BigQuery 결과를 Storage Read API 대신 REST로 내려받게 한다.
-
-    Feast는 결과를 QueryJob.to_arrow()로 받고, 이 함수는 기본으로 Storage Read API를 쓴다.
-    그 API는 bigquery.readsessions.create 권한(roles/bigquery.readSessionUser)이 필요한데
-    2026-11-14 기준 우리 계정에 없어 403이 난다. 권한이 생기면 이 함수를 지운다.
-    REST는 느리다 (임베딩 1,536열 × 4만 행이면 수 분).
-    """
-    from google.cloud.bigquery.job import QueryJob
-    original = QueryJob.to_arrow
-    if getattr(original, "_rest_only", False):
-        return
-
-    def to_arrow(self, *args, **kwargs):
-        kwargs["create_bqstorage_client"] = False
-        return original(self, *args, **kwargs)
-
-    to_arrow._rest_only = True
-    QueryJob.to_arrow = to_arrow
-
-
 def historical(store: FeatureStore, entity_df: pd.DataFrame) -> pd.DataFrame:
     """get_historical_features. 로컬 file 오프라인 저장소의 중복 제거 문제를 피해 나눠 부른다.
 
@@ -57,7 +36,6 @@ def historical(store: FeatureStore, entity_df: pd.DataFrame) -> pd.DataFrame:
     BigQuery 저장소는 이 문제가 없어 한 번에 부른다 (check_rows로 확인).
     """
     if store.config.offline_store.type != "file":
-        use_rest_download()
         return store.get_historical_features(
             entity_df=entity_df, features=store.get_feature_service(SERVICE)).to_df()
     # impression 기준이면 한 요청의 카드 N장이 (reader_id, 시각)을 공유한다 → 그것도 나눈다.
@@ -133,6 +111,7 @@ def main() -> None:
     start = time.time()
     df = historical(store, entity_df).sort_values("row_id").reset_index(drop=True)
     check_rows(entity_df, df)
+    df = df.drop(columns=["exposed"], errors="ignore")   # 분석용(entity_df)이라 학습 표에서는 뺀다
     print(f"get_historical_features: {time.time() - start:.1f}초, 결과 {df.shape} (행 수 검사 통과)")
 
     df.to_parquet(out, index=False)

@@ -34,7 +34,7 @@ article = Entity(name="article", join_keys=["article_id"], value_type=ValueType.
 # source table 위치. FEAST_SOURCE=bigquery면 BigQuery 표(upload_to_bq.py로 올린 것), 아니면 로컬 parquet.
 # 정의(피처 이름·타입·entity)는 같고 원천만 바뀐다. BigQuery 쪽 설정은 feature_store.bq.yaml.
 SOURCE_KIND = os.environ.get("FEAST_SOURCE", "file")
-BQ_DATASET = os.environ.get("FEAST_BQ_DATASET", "final-project-513508.dev_yoonmo")
+BQ_DATASET = os.environ.get("FEAST_BQ_DATASET", "final-project-513508.dev_yoonmo")  # 기본값은 가짜 로그 실험용
 
 
 def source(name: str):

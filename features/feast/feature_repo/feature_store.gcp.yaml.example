@@ -1,4 +1,4 @@
-# [계획] 실제 GCP로 옮길 때의 설정 예시. 아직 실행해 보지 않았다 (BigQuery 권한: infra#29, Valkey: infra#13 대기).
+# [계획] 실제 GCP로 옮길 때의 설정 예시. BigQuery는 11/18에 실행 확인했고, Valkey 연결은 접속 정보를 받은 뒤 확인한다.
 # 쓰는 법: 이 파일을 feature_store.yaml로 복사하고, definitions.py의 FileSource를 BigQuerySource로 바꾼다.
 project: news_rec
 provider: gcp
@@ -11,6 +11,7 @@ offline_store:
   location: asia-northeast3
 online_store:
   type: redis                # Valkey는 Redis 프로토콜 호환이라 redis 타입으로 붙는다 (Valkey 실물로는 미검증)
-  # 비밀번호는 파일에 쓰지 않는다. Feast는 ${ENV} 형태를 환경변수로 바꿔 읽는다.
-  connection_string: "${VALKEY_HOST}:6379,password=${VALKEY_PASSWORD}"
+  # 현재 dev Valkey는 인증 없는 단독 구성이다. 인증을 켤 때만 password를 붙인다.
+  connection_string: "${VALKEY_HOST}:6379"
+  # 인증을 켜면: connection_string: "${VALKEY_HOST}:6379,password=${VALKEY_PASSWORD}"
 entity_key_serialization_version: 3
