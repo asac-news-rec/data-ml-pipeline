@@ -23,7 +23,14 @@ from kubernetes.client import models as k8s
 
 NAMESPACE = os.environ.get("FEAST_WORK_NAMESPACE", "airflow")
 SERVICE_ACCOUNT = os.environ.get("FEAST_WORK_SERVICE_ACCOUNT", "airflow-task")
-REQUIRED_VARS = ["feast_work_image", "feast_registry_path"]
+REQUIRED_VARS = [
+    "feast_work_image",
+    "feast_registry_path",
+    "valkey_host",
+    "gcp_project_id",
+    "feast_bq_dataset",
+    "feast_bq_temp_dataset",
+]
 
 
 def check_config(**context) -> None:
@@ -65,11 +72,11 @@ with DAG(
             "FEAST_FULL_MATERIALIZE": "{{ var.value.get('feast_full_materialize', 'false') }}",
             "FEAST_MATERIALIZE_START": "{{ var.value.get('feast_materialize_start', '') }}",
             "FEAST_MATERIALIZE_LOOKBACK_HOURS": "{{ var.value.get('feast_materialize_lookback_hours', '3') }}",
-            "FEAST_REGISTRY_PATH": "{{ var.value.get('feast_registry_path', '') }}",
-            "VALKEY_HOST": "{{ var.value.get('valkey_host', 'valkey.valkey.svc.cluster.local') }}",
-            "GCP_PROJECT_ID": "{{ var.value.get('gcp_project_id', 'final-project-513508') }}",
-            "FEAST_BQ_DATASET": "{{ var.value.get('feast_bq_dataset', 'final-project-513508.dev_yoonmo') }}",
-            "FEAST_BQ_TEMP_DATASET": "{{ var.value.get('feast_bq_temp_dataset', 'dev_yoonmo') }}",
+            "FEAST_REGISTRY_PATH": "{{ var.value.feast_registry_path }}",
+            "VALKEY_HOST": "{{ var.value.valkey_host }}",
+            "GCP_PROJECT_ID": "{{ var.value.gcp_project_id }}",
+            "FEAST_BQ_DATASET": "{{ var.value.feast_bq_dataset }}",
+            "FEAST_BQ_TEMP_DATASET": "{{ var.value.feast_bq_temp_dataset }}",
         },
         get_logs=True,
         on_finish_action="delete_pod",
