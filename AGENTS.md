@@ -178,8 +178,8 @@ git diff --check
 변경 영역별 검증:
 
 - GitHub workflow 변경: 로컬에 `actionlint`가 있으면 함께 사용합니다.
-- Python 변경 **[계획]**: lint와 테스트를 통과시킵니다 (도구 확정 후 명령 기재).
-- DAG 변경 **[계획]**: 로컬 Airflow에서 DAG가 import 오류 없이 로드되는지 확인합니다.
+- Python 변경: Airflow가 설치된 환경에서 `python -m unittest discover -s tests -v`를 돌립니다. lint 도구는 아직 없습니다([미정]).
+- DAG 변경: 로컬 Airflow에서 DAG가 import 오류 없이 로드되는지 확인합니다.
 - SQL 변경 **[계획]**: BigQuery dry run으로 문법과 읽는 바이트를 확인합니다.
 
 ## 리뷰 기준
