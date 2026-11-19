@@ -1,0 +1,74 @@
+"""PostgreSQL 행동 로그를 GCS 원본 영역으로 내보내는 적재 DAG."""
+import os
+from datetime import datetime, timedelta, timezone
+
+import pendulum
+try:
+    from airflow.sdk import dag, get_current_context, task
+except ModuleNotFoundError as error:
+    if error.name != "airflow.sdk":
+        raise
+    from airflow.decorators import dag, task
+    from airflow.operators.python import get_current_context
+from airflow.timetables.interval import CronDataIntervalTimetable
+from airflow.exceptions import AirflowFailException
+
+
+def export_bounds(conf: dict, context: dict) -> tuple[datetime, datetime]:
+    """수동·예약 실행의 구간을 검증하고 UTC로 정규화합니다."""
+    try:
+        if "interval_start" in conf or "interval_end" in conf:
+            start = datetime.fromisoformat(conf["interval_start"])
+            end = datetime.fromisoformat(conf["interval_end"])
+        else:
+            start = context.get("data_interval_start")
+            end = context.get("data_interval_end")
+        if any(not isinstance(bound, datetime) or bound.utcoffset() is None
+               or bound.microsecond % 1000 for bound in (start, end)) or start >= end:
+            raise ValueError("invalid bounds")
+    except (KeyError, TypeError, ValueError) as error:
+        raise AirflowFailException(
+            "Expected interval_start and interval_end together: timezone-aware, "
+            "millisecond-aligned timestamps with start < end; "
+            f"start={conf.get('interval_start', context.get('data_interval_start'))!r}, "
+            f"end={conf.get('interval_end', context.get('data_interval_end'))!r}"
+        ) from error
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+cron = os.getenv("BEHAVIOR_EXPORT_CRON")
+start_date = os.getenv("BEHAVIOR_EXPORT_START")
+if cron and not start_date:
+    raise ValueError("BEHAVIOR_EXPORT_START is required when scheduling behavior export")
+
+
+@dag(
+    dag_id="export_behavior_logs",
+    schedule=CronDataIntervalTimetable(cron, timezone="UTC") if cron else None,
+    start_date=pendulum.parse(start_date, tz="UTC") if start_date else None,
+    catchup=True,
+    max_active_runs=1,
+    is_paused_upon_creation=True,
+)
+def behavior_export():
+    @task(retries=3, retry_delay=timedelta(minutes=1), do_xcom_push=False)
+    def upload():
+        from logging_service.interval_export import export_interval
+
+        context = get_current_context()
+        conf = context["dag_run"].conf or {}
+        start, end = export_bounds(conf, context)
+        export_interval(start, end)
+
+    @task(retries=3, retry_delay=timedelta(minutes=1), do_xcom_push=False)
+    def prune_postgresql():
+        from contextlib import closing
+        from logging_service.postgres import PostgresStore
+
+        with closing(PostgresStore(os.environ["LOGGING_DATABASE_URL"])) as store:
+            print(f"Pruned exported records: {store.prune_exported_records()}")
+
+    upload() >> prune_postgresql()
+
+
+export_behavior_logs = behavior_export()

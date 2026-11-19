@@ -45,9 +45,10 @@
 - **[현재]** README, 에이전트 하네스(`AGENTS.md`),
   협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 3개
   (`branch-name-policy.yml`, `claude.yml`, `feast-apply.yml`), `.gitignore`,
-  Airflow 연결 확인용 테스트 DAG `dags/hello_airflow.py`(#12)가 있습니다. Python 코드는
-  `features/feast/`(Feast 피처 스토어 로컬 프로토타입, parquet + SQLite)뿐이고,
-  실제 파이프라인 DAG는 아직 없습니다.
+  Airflow 연결 확인용 테스트 DAG `dags/hello_airflow.py`(#12), 행동 로그 내보내기
+  DAG `dags/export_behavior_logs.py`(#14), Feast 피처 스토어 로컬 프로토타입
+  `features/feast/`(parquet + SQLite)가 있습니다. 행동 로그 내보내기 DAG의
+  운영 Airflow 3.2.2 실검증은 아직 완료하지 않았습니다.
 - **[계획]** 아래 구조로 만들 예정입니다. 경로·이름은 바뀔 수 있습니다.
 
 ```
