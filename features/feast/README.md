@@ -57,7 +57,7 @@ Feast는 Airflow 이미지에 넣지 않는다. Airflow 이미지의 `google-clo
 - DAG: `dags/materialize_feast.py`, 스크립트: `features/feast/materialize.py`
 - 설정: `feature_store.gcp.yaml` (GCS registry + Valkey online store)
 - Airflow 이미지에 `apache-airflow-providers-cncf-kubernetes`가 필요하다. 로컬 Airflow 3.4.0에는 없어서 DAG import는 클러스터에서 확인한다.
-- Pod는 Kubernetes service account `airflow-task`로 뜬다(`FEAST_WORK_SERVICE_ACCOUNT`로 바꿀 수 있다). GCP 권한은 이 계정의 Workload Identity에 붙는다.
+- Pod는 Kubernetes service account `airflow-task`으로 뜬다(`FEAST_WORK_SERVICE_ACCOUNT`로 바꿀 수 있다). GCP 권한은 이 계정의 Workload Identity에 붙는다.
 - 자원 요청: CPU 500m / 메모리 2Gi, 한도: CPU 2 / 메모리 4Gi. 첫 실행 때 실측해 조정한다.
 
 Airflow Variables (`feast_work_image`나 `feast_registry_path`가 없으면 파드를 만들기 전에 실패한다. 나머지 값이 비면 파드가 뜬 뒤 몇 초 안에 무엇이 비었는지 출력하고 끝난다. 채우기 전에는 DAG를 켜지 않는다):
