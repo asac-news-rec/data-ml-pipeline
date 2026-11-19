@@ -10,7 +10,7 @@ PostgreSQL 레코드를 기존 보관 정책에 따라 정리합니다.
 
 ### Airflow 실행 환경
 
-- [프런트엔드 #28의 머지 커밋](https://github.com/asac-news-rec/frontend/commit/23931d6409e2ca80602dc3df870bc3400a9d0b30)에서
+- [프런트엔드 #38의 머지 커밋](https://github.com/asac-news-rec/frontend/commit/8bacd79cef622b67aef9cc18ee9bae7bcdfce75c)에서
   `services/logging-server/logging_service/`를 태스크 실행 이미지의 Python 경로에
   포함합니다. 패키지 내 SQL 파일도 함께 포함합니다. 같은 이미지에
   `psycopg[binary]==3.3.8`과 `google-cloud-storage==3.17.1`을 설치합니다.
@@ -23,6 +23,9 @@ PostgreSQL 레코드를 기존 보관 정책에 따라 정리합니다.
 
 ### 검증과 활성화
 
+Airflow가 설치된 환경에서 `python -m unittest discover -s tests -v`로 구간 입력과
+업로드 → 정리 의존성을 검증합니다. 실제 PostgreSQL·GCS 내보내기는 아래 순서로 확인합니다.
+
 1. Airflow의 DAG import 오류를 확인하고 `export_behavior_logs`가 등록되었는지 확인합니다.
 2. 검증 환경에서 로그가 들어 있는 UTC 구간을 수동 실행 설정에 넣습니다.
    예시는 `{"interval_start":"2026-11-16T00:00:00Z","interval_end":"2026-11-16T00:05:00Z"}`입니다.
@@ -33,6 +36,19 @@ PostgreSQL 레코드를 기존 보관 정책에 따라 정리합니다.
 `BEHAVIOR_EXPORT_START`(UTC ISO 8601)를 함께 설정합니다. DAG는 처음에 일시
 정지 상태로 등록됩니다. `catchup=True`이므로 처리할 첫 데이터 구간에 맞춰
 시작 시각을 정한 뒤 활성화합니다.
+
+수동 입력은 두 경계를 함께 요구하며 시간대, 밀리초 정렬, `start < end`를
+검증합니다. 잘못된 입력은 `AirflowFailException`으로 재시도 없이 실패합니다.
+오프셋이 있는 값은 UTC로 정규화합니다. `upload` 성공 후에만 `prune_postgresql`을 실행합니다.
+
+이미지의 `PostgresStore.prune_exported_records()`는 `uploaded` 상태와 GCS generation
+receipt가 있는 작업에 포함된 레코드만 정리하고, 수신·발생 시각 모두 24시간이 지난
+행을 대상으로 합니다. 작업 ID와 객체명·receipt는 보존합니다.
+`Exporter.flush()`는 데이터와 manifest 저장 뒤 작업을 uploaded로 표시합니다.
+일부 업로드 후 실패하면 고정된 객체명·내용으로 재시도하며, `GCSSink.put()`은
+generation 조건부 생성과 기존 내용 비교로 중복·충돌을 검사합니다.
+구간은 발생 시각이 아닌 `received_at` 기준이므로 늦게 도착한 이벤트는 수신된
+다음 구간에 포함됩니다. 원래 발생 시각은 JSONL 레코드에 유지하며 객체 경로는 수신 구간을 사용합니다.
 
 ## 에이전트 하네스
 
