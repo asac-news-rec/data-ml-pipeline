@@ -5,7 +5,8 @@ name: Feast apply
 #   - main 머지: feast apply로 GCS registry에 정의를 적는다.
 #
 # GCS file registry는 통째로 덮어쓴다. 그래서 materialize DAG(매시)가 같은 파일에 적재 구간을
-# 쓰는 중이면 나중에 쓴 쪽이 이긴다. 정의를 배포할 때는 DAG를 잠시 멈추고 apply한 뒤 다시 켠다
+# 쓰는 중이면 나중에 쓴 쪽이 이긴다. 정의를 배포할 때는 DAG를 멈추고, 실행 중이던 materialize
+# task와 Pod가 모두 끝난 뒤 apply하고 다시 켠다
 # (features/feast/README.md '정의 변경 배포 순서').
 on:
   pull_request:

@@ -60,26 +60,30 @@ Feast는 Airflow 이미지에 넣지 않는다. Airflow 이미지의 `google-clo
 - Pod는 Kubernetes service account `airflow-task`으로 뜬다(`FEAST_WORK_SERVICE_ACCOUNT`로 바꿀 수 있다). GCP 권한은 이 계정의 Workload Identity에 붙는다.
 - 자원 요청: CPU 500m / 메모리 2Gi, 한도: CPU 2 / 메모리 4Gi. 첫 실행 때 실측해 조정한다.
 
-Airflow Variables (`feast_work_image`나 `feast_registry_path`가 없으면 파드를 만들기 전에 실패한다. 나머지 값이 비면 파드가 뜬 뒤 몇 초 안에 무엇이 비었는지 출력하고 끝난다. 채우기 전에는 DAG를 켜지 않는다):
+Airflow Variables (아래 표에서 `(필수)`가 붙은 값 중 하나라도 없으면 파드를 만들기 전에 실패한다. 채우기 전에는 DAG를 켜지 않는다):
 
 | Variable | 값 |
 | --- | --- |
 | `feast_work_image` | 작업 이미지 태그 (필수, DAG가 템플릿으로 읽는다) |
 | `feast_registry_path` | `gs://.../feast/registry.pb` (필수, 읽기·쓰기) |
-| `valkey_host` | `valkey.valkey.svc.cluster.local` |
-| `gcp_project_id` | `final-project-513508` |
-| `feast_bq_dataset` | `final-project-513508.dev_yoonmo` (source table 위치) |
-| `feast_bq_temp_dataset` | `dev_yoonmo` (entity_df 임시 표) |
+| `valkey_host` | `valkey.valkey.svc.cluster.local` (필수) |
+| `gcp_project_id` | `final-project-513508` (필수) |
+| `feast_bq_dataset` | `final-project-513508.dev_yoonmo` (필수, source table 위치) |
+| `feast_bq_temp_dataset` | `dev_yoonmo` (필수, entity_df 임시 표) |
 | `feast_full_materialize` | `true`면 전체 적재. 첫 적재와 Valkey가 비었을 때만 |
 | `feast_materialize_start` | 전체 적재 시작 시각 `2026-11-03T00:00:00+09:00` |
 | `feast_materialize_lookback_hours` | 늦게 온 원천 행을 덮어쓸 구간 (기본 3, 0이면 안 함) |
 
+DAG가 Variable을 환경변수로 그대로 넘기고, `materialize.py`도 기본값 없이 필수로 받는다. 그래서 Variable을 빠뜨렸을 때 개인 dataset을 읽는 일이 없다.
+
 적재 방식 (`materialize.py`):
 
-- 기본은 증분이다. registry에 기록된 feature view별 마지막 적재 끝에서 Airflow interval 끝까지 이어서 적재한다. 그래서 run이 몇 시간 실패하거나 스케줄이 비어도 그 구간이 빠지지 않는다.
+- 증분은 feature view별로 한다. registry에 기록된 view별 마지막 적재 끝에서 Airflow interval 끝까지 이어서 적재한다. run이 몇 시간 실패하거나 스케줄이 비어도 그 구간이 빠지지 않는다.
+- 적재할 view를 골라 넘긴다. 뒤처진 view만 `materialize_incremental`에 넣고, 이미 `end`보다 앞선 view는 lookback에도 넣지 않는다. 앞선 view의 온라인 값을 과거로 돌리지 않기 위해서다.
 - 증분 적재 뒤에 `end - lookback` ~ `end`를 한 번 더 적재한다. 원천 행이 늦게 들어와도 lookback 안이면 Valkey 값이 고쳐진다. lookback보다 늦게 온 행은 반영되지 않는다.
-- `end`가 이미 적재한 끝보다 이르면(늦게 재시도된 run) 아무것도 하지 않고 끝난다. 온라인 값을 뒤로 돌리지 않기 위해서다.
-- 적재 이력이 없는 registry에서 증분을 부르면 Feast가 52주 전부터 읽는다. 그래서 이력이 없으면 스크립트가 멈추고 전체 적재를 안내한다.
+- 같은 `end`로 재시도하면 증분은 건너뛰고 lookback만 다시 실행한다. 증분이 성공한 뒤 lookback이 실패해도 다음 시도에서 덮는다.
+- 모든 view가 `end`보다 앞서 있으면(늦게 재시도된 run) 아무것도 하지 않고 끝난다.
+- 적재 이력이 없는 view가 하나라도 있으면(새 view 추가, registry 초기화) 멈추고 전체 적재를 안내한다. ttl이 0이라 증분을 그냥 부르면 Feast가 52주 전부터 읽는다.
 
 첫 적재: `feast_full_materialize=true`, `feast_materialize_start=2026-11-03T00:00:00+09:00`로 한 번 돌리고, 이후 `false`로 되돌린다.
 
@@ -94,7 +98,14 @@ Feast는 materialize가 끝나면 적재 구간을 registry에 append한다(`Fea
 - 작업 파드의 서비스 계정에는 registry 읽기와 쓰기가 모두 필요하다.
 - GCS file registry는 파일을 통째로 덮어쓴다. 매시 materialize와 main 머지 시 `feast apply`가 겹치면 나중에 쓴 쪽이 이기고, 진 쪽의 변경(정의 또는 적재 구간)이 사라진다. `feast-apply.yml`의 `concurrency`는 apply끼리만 막는다.
 
-정의 변경 배포 순서: `feast_materialize` DAG 일시 중지 → 정의 PR 머지 → `feast-apply.yml`의 apply 성공 확인 → DAG 재개. apply가 실패했는데 DAG가 켜져 있으면 다음 materialize가 옛 정의를 다시 쓸 수 있다.
+정의 변경 배포 순서:
+
+1. `feast_materialize` DAG를 일시 중지한다.
+2. 실행 중인 materialize가 끝났는지 확인한다. DAG pause는 이미 도는 task를 멈추지 않는다. Airflow UI에서 `feast_materialize`의 실행 중 task instance가 없는지, `kubectl -n airflow get pods | grep feast-materialize`에 파드가 없는지 본다.
+3. 정의 PR을 머지하고 `feast-apply.yml`의 apply 성공을 확인한다.
+4. DAG를 재개한다.
+
+apply가 실패했는데 DAG가 켜져 있으면 다음 materialize가 옛 정의를 다시 쓸 수 있다. 2번을 건너뛰면 실행 중이던 파드가 apply 뒤에 registry를 덮어써서, apply에서 넣은 정의나 그 파드의 적재 구간 중 하나가 사라진다.
 
 ## 파일
 
@@ -106,13 +117,11 @@ Feast는 materialize가 끝나면 적재 구간을 registry에 append한다(`Fea
 | `feature_repo/feature_store.yaml` | 로컬 설정 (file + sqlite) |
 | `feature_repo/feature_store.bq.yaml` | 오프라인만 BigQuery(`dev_yoonmo`), registry·온라인은 로컬 파일 |
 | `upload_to_bq.py` | 원천 parquet 4개 → BigQuery 표 (exposures는 entity_df라 올리지 않는다) |
-| `feature_repo/feature_store.gcp.yaml.example` | [계획] BigQuery + Valkey 설정 예시 (미실행) |
 | `feature_repo/feature_store.ci.yaml` | GitHub Actions의 `feast plan`/`apply`용 설정 (GCS registry, BigQuery offline, SQLite online) |
 | `.github/workflows/feast-apply.yml` | PR이면 `feast plan`, main 머지면 GCS registry에 `feast apply`. Settings variables를 넣기 전에는 건너뛴다 |
 | `feature_repo/feature_store.gcp.yaml` | GCP 운영 설정 (GCS registry + Valkey online) |
 | `../../dags/materialize_feast.py` | `KubernetesPodOperator`로 materialize 작업 이미지를 띄우는 DAG (이미지는 `feast_work_image` Variable) |
 | `../../pyproject.toml` | 작업 이미지 의존성 (`airflow-dag`/`train` 묶음) |
-| `../../uv.lock` | 작업 이미지 의존성 고정 |
 | `../../uv.lock` | 그 의존성의 버전 고정. 작업 이미지와 CI가 같이 쓴다 |
 | `build_training_set.py` | `get_historical_features`로 training set을 만들고 `make_features.py` 결과와 대조 |
 | `online_demo.py` | `materialize` → `get_online_features` → 같은 시각 오프라인 값과 비교 |

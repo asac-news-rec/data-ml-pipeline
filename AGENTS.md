@@ -45,9 +45,11 @@
 - **[현재]** README, 에이전트 하네스(`AGENTS.md`),
   협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 3개
   (`branch-name-policy.yml`, `claude.yml`, `feast-apply.yml`), `.gitignore`,
-  Airflow 연결 확인용 테스트 DAG `dags/hello_airflow.py`(#12)가 있습니다. Python 코드는
-  `features/feast/`(Feast 피처 스토어 로컬 프로토타입, parquet + SQLite)뿐이고,
-  실제 파이프라인 DAG는 아직 없습니다.
+  저장소 루트 `pyproject.toml`·`uv.lock`, Airflow DAG 2개
+  (`dags/hello_airflow.py`(#12), `dags/materialize_feast.py`(#16)),
+  Python 코드 `features/feast/`(Feast 피처 스토어: 로컬 parquet + SQLite, BigQuery
+  오프라인, GCS registry + Valkey 온라인)가 있습니다. 적재·정제·집계 DAG는 아직
+  없습니다.
 - **[계획]** 아래 구조로 만들 예정입니다. 경로·이름은 바뀔 수 있습니다.
 
 ```
@@ -58,8 +60,10 @@ serving/       # 추론 서버 점수화 코드 [미정: 이 저장소에 둘지
 docs/          # 피처 정의서, 지표 문서 (필요할 때 생성)
 ```
 
-- **[미정]** Python 패키지 관리 도구, lint·테스트 도구, 추론 서버 코드를 둘
-  저장소, 이벤트 필드 이름 일부.
+- **[현재]** Python 패키지 관리는 `uv`로 정했습니다. 의존성은 저장소 루트
+  `pyproject.toml`에 묶음(`airflow-dag`, `train`)으로 두고 `uv.lock`으로 버전을
+  고정합니다. **[미정]** lint·테스트 도구, 추론 서버 코드를 둘 저장소, 이벤트
+  필드 이름 일부.
 - 설계 배경은 `blueprint` 저장소의 처리·피처·모델 페이지(`yunmo.html`)를
   참조합니다.
 - 저장소는 5개입니다:
@@ -124,9 +128,10 @@ docs/          # 피처 정의서, 지표 문서 (필요할 때 생성)
   `refactor`, `chore`.
 - 이미 push된 브랜치를 사용자 동의 없이 force push하지 않습니다.
 
-## Python 작성 규칙 [계획]
+## Python 작성 규칙
 
-첫 Python 코드를 넣을 때 적용합니다. 도구가 정해지면 이 절을 갱신합니다.
+lint·테스트 도구는 아직 정하지 않았습니다([미정]). 도구가 정해지면 실행 명령을
+여기에 추가합니다. 아래 규칙은 지금 있는 Python 코드에 적용합니다.
 
 - 함수에는 반환 타입을 포함한 타입 힌트를 답니다.
 - 모듈 최상단 docstring에 이 모듈이 파이프라인의 어느 구간(적재 → 정제 →
@@ -137,11 +142,12 @@ docs/          # 피처 정의서, 지표 문서 (필요할 때 생성)
   메시지에 담고, 시크릿은 담지 않습니다.
 - 테스트는 외부 서비스(BigQuery, GCS, MLflow)를 mock으로 격리합니다.
 
-## 로컬 개발 [계획]
+## 로컬 개발
 
-Python 패키지 관리와 lint·테스트 도구는 첫 코드를 넣을 때 정하고, 아래에
-실제 명령을 적습니다.
-
+- Python 패키지는 `uv`로 관리합니다. 저장소 루트에서 `uv sync --frozen --extra
+  airflow-dag`(materialize 작업 이미지와 같은 의존성) 또는 `--extra train`으로
+  설치합니다.
+- lint·테스트 도구와 실행 명령은 아직 없습니다([미정]).
 - DAG는 infra 레포의 compose로 띄운 로컬 Airflow에서 확인합니다. 두 레포를
   같은 폴더 아래 나란히 클론합니다 (`infra/`, `data-ml-pipeline/`).
 - 실값 환경 변수는 `.env`에 두고 커밋하지 않습니다.
