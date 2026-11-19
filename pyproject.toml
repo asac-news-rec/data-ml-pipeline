@@ -37,6 +37,18 @@ train = [
   "pyarrow",
   "numpy",
 ]
+# 추론 서버 이미지 (FastAPI, Feast online, LightGBM, MLflow model load)
+serving = [
+  "fastapi",
+  "uvicorn[standard]",
+  "feast[gcp,redis]==0.68.0",
+  "lightgbm",
+  "scikit-learn",
+  "mlflow",
+  "pandas",
+  "numpy",
+  "pydantic",
+]
 
 [tool.uv]
 package = false

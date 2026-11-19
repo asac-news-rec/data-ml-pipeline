@@ -18,6 +18,7 @@ venv/
 
 # 생성된 데이터·모델 파일
 data/
+models/
 *.csv
 *.parquet
 *.pkl
