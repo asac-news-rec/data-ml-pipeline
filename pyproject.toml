@@ -5,6 +5,10 @@ description = "ASAC news recommendation data/ML pipeline"
 requires-python = ">=3.12,<3.13"
 dependencies = []
 
+# 버전은 uv.lock으로 고정한다. 작업 이미지와 CI는 `uv sync --frozen --extra <묶음>`으로 설치한다.
+# 묶음 안의 패키지에 버전을 적지 않는 이유: Feast가 요구하는 범위를 lock이 맞춰 주고,
+# lock만 갱신하면 이미지와 CI가 같은 버전을 쓴다.
+
 [project.optional-dependencies]
 # Airflow가 띄우는 Python 3.12 작업 이미지 (Feast materialize)
 airflow-dag = [
