@@ -90,16 +90,26 @@ Pod 설정은 함께 동기화되는 `dags/pod_templates/news-generator.yaml`에
 | 기사 모델 | `google/gemini-2.5-flash` |
 | 이미지 모델 | `black-forest-labs/flux.2-klein-4b` |
 
-배치 날짜는 `data_interval_end`를 한국 시간으로 변환한 날짜를 사용합니다.
+배치 날짜는 예약 실행의 `data_interval_end`를 한국 시간으로 변환해 사용합니다.
+수동 실행에서 이 값이 없거나 null이면 해당 DagRun의 고정된 `run_after`를 사용합니다.
+현재 시각을 다시 계산하지 않으므로 재시도·동일 DagRun Clear에서도 배치 날짜가 유지됩니다.
 실행 ID는 DAG ID와 Airflow `run_id`를 연결해 전달하므로 같은 태스크의 재시도에서는
-같은 날짜·실행 ID로 백업을 재사용합니다. 작업이 끝나면 Pod는 삭제되지만 PVC 파일은 유지됩니다.
+같은 날짜·실행 ID로 백업을 재사용합니다. JSONL에 같은 `generation.run_id`와 순번의
+기사가 있으면 기사·이미지 생성 API를 다시 호출하지 않고 GCS 확인과 DB UPSERT를 재시도합니다.
+DB의 동일 기사 ID는 UPDATE하므로 중복 INSERT하지 않습니다. 해당 순번이 저장되기 전에
+실패했거나 백업이 7일 정책·수동 삭제·PVC 교체로 없어졌다면 새 기사 생성과 API 호출이 발생할 수
+있습니다. Clear도 같은 DagRun일 때만 이 조건을 따르며 새로 트리거한 DagRun은 별도 생성 작업입니다.
+작업이 끝나면 Pod는 삭제되지만 PVC 파일은 유지됩니다.
 
 ### 이미지 버전 수동 반영
 
 [현재] 백엔드 생성기 CD는 이미지 빌드·검사·Artifact Registry 업로드까지 수행합니다.
 pipeline 저장소의 이슈·PR은 자동 생성하지 않으며 `PIPELINE_REPO_TOKEN`은 필요하지 않습니다.
 
-현재 DAG와 Pod 템플릿에 반영한 이미지 주소는 다음과 같습니다.
+이미지 주소는 `dags/generate_news.py`의 `GENERATOR_IMAGE` 한 곳에서 관리합니다.
+Pod YAML은 실행 계정·환경변수·볼륨 등의 병합용 템플릿이며 `image` 값을 두지 않습니다.
+실제 Pod에는 KubernetesPodOperator의 `image=GENERATOR_IMAGE` 값이 적용됩니다.
+현재 주소는 다음과 같습니다.
 
 ```text
 asia-northeast3-docker.pkg.dev/final-project-513508/news-rec/news-generator:54317e07df0dc8076c2949f8d66d0368bbdd4af6
@@ -109,8 +119,7 @@ asia-northeast3-docker.pkg.dev/final-project-513508/news-rec/news-generator:5431
 
 1. 백엔드 Actions → generator-cd → 성공한 실행 → Summary의 이미지 주소를 복사합니다.
 2. `dags/generate_news.py`의 `GENERATOR_IMAGE`를 새 전체 주소로 바꿉니다.
-3. `dags/pod_templates/news-generator.yaml`의 `base` 컨테이너 `image`도 같은 주소로 바꿉니다.
-4. 이 저장소의 이슈 → 연결 브랜치 → PR → 승인·머지 절차로 반영합니다.
+3. 이 저장소의 이슈 → 연결 브랜치 → PR → 승인·머지 절차로 반영합니다.
 
 머지 후 기존 git-sync가 DAG와 템플릿을 Airflow에 전달합니다. 최초 등록한 DAG는
 일시 중지 상태이므로 인프라 준비와 실행 검증 후 활성화합니다.
@@ -167,6 +176,14 @@ python -m py_compile dags/generate_news.py
 git diff --check
 ```
 
+Airflow와 Kubernetes provider가 설치된 환경에서는 다음으로 실제 DAG를 import하고
+날짜 인자를 렌더링합니다. 예약 실행, 수동 실행의 null·누락 값, 한국 날짜 경계,
+같은 실행의 재시도·Clear 인자 유지와 이미지 설정을 외부 API·클러스터 접속 없이 검사합니다.
+
+```bash
+python -m unittest discover -s tests -p test_generate_news.py
+```
+
 실제 Airflow 환경에는 `airflow.sdk`를 지원하는 버전과
 `apache-airflow-providers-cncf-kubernetes`가 필요합니다. 로컬 개발용 의존성 파일을
 올리는 것만으로 인프라의 Airflow 이미지에 패키지가 설치되지는 않습니다.
@@ -183,21 +200,22 @@ airflow dags list
 썸네일은 10건마다 생성되므로 첫 1건에 PNG가 없는 것은 정상입니다. 썸네일 생성 대상까지
 누적 실행한 뒤 GCS 업로드와 화면의 이미지 표시를 확인하고 예약 실행을 활성화합니다.
 
-장애 시 DAG를 일시 중지하고 DAG와 Pod 템플릿의 이미지 주소를 함께 이전 버전으로
+장애 시 DAG를 일시 중지하고 `generate_news.py`의 `GENERATOR_IMAGE`를 이전 버전으로
 되돌립니다. 이미 삭제한 PVC 파일은 이미지 롤백으로 복구되지 않습니다.
 OpenRouter 사용료와 이미지 저장·전송 비용은 실행 주기와 생성 건수에 따라 발생합니다.
 
 ### 로컬 검증 파일과 커밋 범위
 
 로컬 Airflow용 Compose·설정·로그와 개발용 `pyproject.toml`·`uv.lock`은 이 뉴스 생성 DAG
-배포에 포함하지 않으며 `.gitignore`로 제외합니다. 파일은 PC에 유지됩니다.
+배포에 포함하지 않으며 개인 저장소의 `.git/info/exclude`로 제외합니다. 파일은 PC에 유지됩니다.
+공유 `.gitignore`에서는 `pyproject.toml`·`uv.lock`·설정 디렉터리를 차단하지 않습니다.
 `dags/hello_airflow.py`는 기존 연결 확인 DAG이므로 이번 뉴스 생성 PR에 로컬 실험 변경을
 함께 넣지 않습니다. 이미 추적 중인 파일은 `.gitignore`로 제외되지 않으므로 파일을 지정해 추가합니다.
 
 이슈 연결 브랜치를 준비한 뒤 이번 배포 파일만 스테이징합니다.
 
 ```bash
-git add .gitignore README.md dags/generate_news.py dags/pod_templates/news-generator.yaml
+git add README.md dags/generate_news.py dags/pod_templates/news-generator.yaml tests/test_generate_news.py
 git diff --cached --stat
 git diff --cached --check
 ```

@@ -42,7 +42,7 @@ with DAG(
             "--image-model", IMAGE_MODEL,
             "--count", "1",
             "--output-root", OUTPUT_ROOT,
-            "--date", "{{ data_interval_end.in_timezone('Asia/Seoul').strftime('%Y-%m-%d') }}",
+            "--date", "{{ (data_interval_end | default(dag_run.run_after, true)).in_timezone('Asia/Seoul').strftime('%Y-%m-%d') }}",
             "--run-id", "{{ dag.dag_id }}:{{ run_id }}",
             "--image-base-url", IMAGE_BASE_URL,
             "--write-db",

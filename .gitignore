@@ -32,17 +32,3 @@ agent.local.md
 .DS_Store
 .vscode/
 .idea/
-
-# 이 뉴스 생성 DAG 배포에서 제외하는 로컬 Airflow 환경
-/docker-compose.yaml
-/docker-compose.yml
-/logs/
-/config/
-/plugins/
-/dags/logs/
-/dags/config/
-/dags/plugins/
-/dags/dags/
-/dags/.airflowignore
-/pyproject.toml
-/uv.lock
