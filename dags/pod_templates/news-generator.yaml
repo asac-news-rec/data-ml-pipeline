@@ -1,0 +1,42 @@
+# infra 이슈 #59에서 확정한 리소스 이름입니다. 클러스터 적용 상태는 실행 전에 확인합니다.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: news-generator
+  namespace: airflow
+spec:
+  restartPolicy: Never
+  serviceAccountName: airflow-task
+  containers:
+    - name: base
+      # 이미지와 실행 명령은 generate_news.py의 KubernetesPodOperator가 지정합니다.
+      env:
+        - name: THUMBNAIL_BUCKET
+          value: final-project-513508-news-thumbnails
+        # Secret 등록·GCP 계정 읽기 권한은 infra #59 회신 기준 완료됐습니다.
+        - name: OPENROUTER_API_KEY_SECRET
+          value: projects/final-project-513508/secrets/openrouter-api-key/versions/latest
+        - name: PGHOST
+          value: "cloud-sql-proxy"
+        - name: PGPORT
+          value: "5432"
+        - name: PGDATABASE
+          value: newsdb
+        - name: PGUSER
+          value: news_app
+        - name: PGPASSWORD_SECRET
+          value: projects/final-project-513508/secrets/news-db-password/versions/latest
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "256Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+      volumeMounts:
+        - name: news-output
+          mountPath: /mnt/news-output
+  volumes:
+    - name: news-output
+      persistentVolumeClaim:
+        claimName: news-output
