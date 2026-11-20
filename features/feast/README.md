@@ -58,9 +58,23 @@ cd feature_repo && ../.venv/bin/feast -f feature_store.bq.yaml apply && cd ..
 | `upload_to_bq.py` | 원천 parquet 4개 → BigQuery 표 (exposures는 entity_df라 올리지 않는다) |
 | `feature_repo/feature_store.gcp.yaml.example` | [계획] BigQuery + Valkey 설정 예시 (미실행) |
 | `feature_repo/feature_store.ci.yaml` | GitHub Actions의 `feast plan`/`apply`용 설정 (GCS registry, BigQuery offline, SQLite online) |
-| `.github/workflows/feast-apply.yml` | PR이면 `feast plan`, main 머지면 GCS registry에 `feast apply`. Settings variables를 넣기 전에는 건너뛴다 |
+| `.github/workflows/feast-apply.yml` | PR이면 `plan` job이 읽기 계정으로 `feast plan`, main 머지·수동 실행이면 `apply` job이 쓰기 계정으로 GCS registry에 `feast apply`. Settings 값을 넣기 전에는 건너뛴다 (아래 「CI 설정」) |
 | `build_training_set.py` | `get_historical_features`로 training set을 만들고 `make_features.py` 결과와 대조 |
 | `online_demo.py` | `materialize` → `get_online_features` → 같은 시각 오프라인 값과 비교 |
+
+## CI 설정 (`feast-apply.yml`)
+
+PR 코드가 registry를 덮어쓰지 않게 계정을 둘로 나눈다. 계정과 권한은 infra #55, WIF 공급자는 infra에서 만든다.
+
+| job | 언제 | 로그인 계정 변수 | 권한 | 추가 조건 |
+| --- | --- | --- | --- | --- |
+| `plan` | PR | `GCP_FEAST_PLAN_SA` | registry 읽기 | 없음 |
+| `apply` | main push, 수동 실행 | `GCP_FEAST_APPLY_SA` | registry 읽기·쓰기 | Environment `production` (deployment branches = `main`) |
+
+저장소 Settings에 넣을 값 (비밀값 아님):
+
+- Environments: `production`. Deployment branches를 `main`으로 제한한다. 수동 실행을 다른 브랜치에서 눌러도 이 규칙에 막힌다.
+- Actions variables (저장소 수준): `GCP_PROJECT_ID`, `FEAST_REGISTRY_PATH`, `FEAST_BQ_TEMP_DATASET`, `FEAST_BQ_DATASET`, `GCP_WIF_PROVIDER`, `GCP_FEAST_PLAN_SA`, `GCP_FEAST_APPLY_SA`. job의 `if:`가 Environment 변수를 읽지 못하므로 Environment가 아니라 저장소 수준에 둔다.
 
 ## 피처 정의
 
