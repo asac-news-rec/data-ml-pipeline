@@ -63,3 +63,141 @@ AI 코딩 도구가 이 저장소에서 일할 때 따르는 규칙은 `AGENTS.m
 있고, 사람용 협업 규칙은 `CONTRIBUTING.md`에 있습니다.
 이 규칙들은 우리 [infra](https://github.com/asac-news-rec/infra) 레포의 하네스를 가져와
 이 레포에 맞게 줄이고 수정한 것입니다 (경량 구성: 상세 가이드 폴더 `.claude/docs/`는 아직 넣지 않음).
+
+## 뉴스 생성 DAG
+
+[현재] `dags/generate_news.py`는 KubernetesPodOperator로 생성기 Pod를 실행합니다.
+Pod 설정은 함께 동기화되는 `dags/pod_templates/news-generator.yaml`에서 읽습니다.
+생성기 소스·CSV·패키지는 백엔드 저장소에서 빌드한 이미지에 포함됩니다.
+
+### 실행 설정
+
+| 항목 | 현재 값 |
+| --- | --- |
+| 일정 | 한국 시간 기준 5분마다 (`*/5 * * * *`) |
+| 생성 건수 | 실행당 기사 1건 |
+| 썸네일 | 보관 백업의 누적 기사 수 기준 10건당 1장 |
+| 동시 실행 | `max_active_runs=1` |
+| 재시도 | 최대 2회, 간격 5분 |
+| 과거 예약 자동 실행 | `catchup=False` |
+| 최초 등록 | 일시 중지 (`is_paused_upon_creation=True`) |
+| 실행 제한 | 태스크당 1시간 |
+| Namespace | `airflow` |
+| Kubernetes 서비스 계정 | `airflow-task` |
+| 생성기 컨테이너 이름 | `base` |
+| PVC | `news-output` (2Gi, ReadWriteOnce) |
+| 마운트·출력 경로 | `/mnt/news-output` |
+| 기사 모델 | `google/gemini-2.5-flash` |
+| 이미지 모델 | `black-forest-labs/flux.2-klein-4b` |
+
+배치 날짜는 `data_interval_end`를 한국 시간으로 변환한 날짜를 사용합니다.
+실행 ID는 DAG ID와 Airflow `run_id`를 연결해 전달하므로 같은 태스크의 재시도에서는
+같은 날짜·실행 ID로 백업을 재사용합니다. 작업이 끝나면 Pod는 삭제되지만 PVC 파일은 유지됩니다.
+
+### 이미지 버전 수동 반영
+
+[현재] 백엔드 생성기 CD는 이미지 빌드·검사·Artifact Registry 업로드까지 수행합니다.
+pipeline 저장소의 이슈·PR은 자동 생성하지 않으며 `PIPELINE_REPO_TOKEN`은 필요하지 않습니다.
+
+현재 DAG와 Pod 템플릿에 반영한 이미지 주소는 다음과 같습니다.
+
+```text
+asia-northeast3-docker.pkg.dev/final-project-513508/news-rec/news-generator:54317e07df0dc8076c2949f8d66d0368bbdd4af6
+```
+
+생성기를 갱신할 때는 다음 순서로 진행합니다.
+
+1. 백엔드 Actions → generator-cd → 성공한 실행 → Summary의 이미지 주소를 복사합니다.
+2. `dags/generate_news.py`의 `GENERATOR_IMAGE`를 새 전체 주소로 바꿉니다.
+3. `dags/pod_templates/news-generator.yaml`의 `base` 컨테이너 `image`도 같은 주소로 바꿉니다.
+4. 이 저장소의 이슈 → 연결 브랜치 → PR → 승인·머지 절차로 반영합니다.
+
+머지 후 기존 git-sync가 DAG와 템플릿을 Airflow에 전달합니다. 최초 등록한 DAG는
+일시 중지 상태이므로 인프라 준비와 실행 검증 후 활성화합니다.
+
+### Secret·GCS·DB 연결
+
+비밀값 자체를 YAML에 넣지 않습니다. 생성기가 Workload Identity/ADC 인증으로
+아래 Secret Manager 버전 경로를 Google SDK에서 조회합니다.
+
+| 환경변수 | 값 |
+| --- | --- |
+| `OPENROUTER_API_KEY_SECRET` | `projects/final-project-513508/secrets/openrouter-api-key/versions/latest` |
+| `PGPASSWORD_SECRET` | `projects/final-project-513508/secrets/news-db-password/versions/latest` |
+| `PGHOST` | `cloud-sql-proxy` |
+| `PGPORT` | `5432` |
+| `PGDATABASE` | `newsdb` |
+| `PGUSER` | `news_app` |
+| `THUMBNAIL_BUCKET` | `final-project-513508-news-thumbnails` |
+| DAG의 `IMAGE_BASE_URL` | `https://storage.googleapis.com/final-project-513508-news-thumbnails/images` |
+
+Pod는 같은 `airflow` namespace의 공유 Cloud SQL Proxy Service를 사용합니다.
+생성기 Pod 안에 별도 Proxy 사이드카는 없습니다. Cloud SQL 접속 IAM 권한은 공유
+Proxy 실행 계정이 사용하며, 생성기는 DB 비밀번호와 기사 적재 권한이 있는 DB 계정을 사용합니다.
+기사 테이블은 사전에 준비되어 있어야 합니다.
+
+썸네일은 PVC에 저장한 뒤 GCS의 `images/YYYY-MM-DD/images/<기사ID>.png`로 업로드합니다.
+이미지가 없는 기사의 `image_url`은 null일 수 있습니다. 업로드된 URL을 Cloud SQL에 적재하며,
+재시도에서 같은 객체가 있으면 내용을 확인하고 재사용합니다.
+
+[현재: 인프라 담당자의 11월 20일 이슈 #59 회신 기준] `openrouter-api-key` 등록과
+GCP 서비스 계정 `airflow`의 두 Secret 읽기 권한, 썸네일 버킷 `images/` 아래 객체 생성·읽기
+권한 설정은 완료됐습니다. PVC 이름·용량은 확정됐지만 생성은 클러스터 가동 시 적용 예정입니다.
+`airflow/airflow-task`와 GCP 계정 `airflow`의 연결도 인프라 적용이 필요합니다.
+실제 Pod의 Secret 조회·GCS 업로드·DB 적재 성공을 확인한 상태는 아닙니다.
+관련 요청: https://github.com/asac-news-rec/infra/issues/59
+
+### 백업 보관
+
+생성기는 정상 생성·업로드·DB 저장 후 한국 시간 기준 오늘 포함 최근 7일의 날짜 폴더만
+보관합니다. 기간이 지난 PVC 폴더의 JSONL·PNG를 함께 삭제하고 삭제 경로를 로그에 남깁니다.
+GCS 이미지와 DB 기사는 삭제하지 않습니다. 정리 실패는 경고로 표시하고 생성 성공은 유지합니다.
+실행이 중지된 동안에는 정리하지 않으며 다음 성공 실행에서 정리합니다.
+
+과거 날짜를 수동 지정해 보관 범위를 벗어나면 생성 성공 직후 그 백업도 삭제됩니다.
+백업 삭제는 썸네일 순번의 집계 기준을 바꿀 수 있습니다. 예를 들어 29건 중 3건의 백업을
+삭제하면 다음 썸네일은 신규 1건째가 아니라 신규 4건째에 생성됩니다.
+
+### 검증 및 운영
+
+커밋 전 Python 문법과 공백 오류를 확인합니다.
+
+```bash
+python -m py_compile dags/generate_news.py
+git diff --check
+```
+
+실제 Airflow 환경에는 `airflow.sdk`를 지원하는 버전과
+`apache-airflow-providers-cncf-kubernetes`가 필요합니다. 로컬 개발용 의존성 파일을
+올리는 것만으로 인프라의 Airflow 이미지에 패키지가 설치되지는 않습니다.
+Airflow 환경에서 다음 명령으로 DAG 로드 상태를 확인합니다.
+
+```bash
+airflow dags list-import-errors
+airflow dags list
+```
+
+클러스터 가동 후 PVC Bound 상태, 실행 계정 연결, 스케줄러의 Pod 생성·조회·로그·삭제 권한,
+공유 Proxy 상태와 DB 계정의 INSERT·UPDATE 권한을 확인합니다.
+일시 중지 상태에서 수동으로 1건을 생성해 JSONL·DB 적재와 재시도 시 기사 재사용을 검증합니다.
+썸네일은 10건마다 생성되므로 첫 1건에 PNG가 없는 것은 정상입니다. 썸네일 생성 대상까지
+누적 실행한 뒤 GCS 업로드와 화면의 이미지 표시를 확인하고 예약 실행을 활성화합니다.
+
+장애 시 DAG를 일시 중지하고 DAG와 Pod 템플릿의 이미지 주소를 함께 이전 버전으로
+되돌립니다. 이미 삭제한 PVC 파일은 이미지 롤백으로 복구되지 않습니다.
+OpenRouter 사용료와 이미지 저장·전송 비용은 실행 주기와 생성 건수에 따라 발생합니다.
+
+### 로컬 검증 파일과 커밋 범위
+
+로컬 Airflow용 Compose·설정·로그와 개발용 `pyproject.toml`·`uv.lock`은 이 뉴스 생성 DAG
+배포에 포함하지 않으며 `.gitignore`로 제외합니다. 파일은 PC에 유지됩니다.
+`dags/hello_airflow.py`는 기존 연결 확인 DAG이므로 이번 뉴스 생성 PR에 로컬 실험 변경을
+함께 넣지 않습니다. 이미 추적 중인 파일은 `.gitignore`로 제외되지 않으므로 파일을 지정해 추가합니다.
+
+이슈 연결 브랜치를 준비한 뒤 이번 배포 파일만 스테이징합니다.
+
+```bash
+git add .gitignore README.md dags/generate_news.py dags/pod_templates/news-generator.yaml
+git diff --cached --stat
+git diff --cached --check
+```
