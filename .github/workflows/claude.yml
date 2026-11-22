@@ -2,7 +2,13 @@ name: Claude Code PR Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    # synchronize: PR에 커밋이 push될 때마다 다시 리뷰한다.
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# 같은 PR에 커밋이 연달아 push되면 앞 리뷰를 취소하고 마지막 커밋만 리뷰한다.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   claude-review:
@@ -18,7 +24,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Run Claude PR review
         uses: anthropics/claude-code-action@v1
@@ -26,6 +32,15 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_SETUP_TOKEN }}
           prompt: |
             You are an expert code reviewer conducting a thorough review of a pull request.
+
+            Review scope:
+            - Event: ${{ github.event.action }}. PR: #${{ github.event.pull_request.number }}.
+            - If the event is "synchronize", new commits were pushed to an already-reviewed PR.
+              Review only the changes in `git diff ${{ github.event.before }} ${{ github.event.after }}`.
+              If that range fails (e.g. after a force push), fall back to `gh pr diff` and focus on recent commits (`git log`).
+              Read the existing review comments first (`gh pr view --comments`) and do not repeat feedback that was already given.
+              Say whether earlier feedback looks addressed by the new commits.
+            - Otherwise, review the whole PR diff (`gh pr diff`).
 
             Provide constructive feedback on code quality, potential bugs, and improvements.
             This repository turns behavior logs into features and trains and evaluates the CTR model for the news recommendation project (ASAC final project), so pay special attention to data contracts, event and feature schemas, point-in-time correctness (no information after the impression time in training data), training-serving feature consistency, BigQuery cost (partition filters, no SELECT *), and secrets handling.
@@ -37,10 +52,11 @@ jobs:
             - Good question targets include behavior changes, edge cases, failure modes, state transitions, data contracts, rollout/rollback impact, and operational assumptions.
             - Do not ask generic best-practice trivia. Questions must be grounded in the actual PR diff.
             - Do not include the answer in the comment.
+            - On "synchronize", add understanding-check questions only for new core logic introduced by the new commits.
             - If the PR is trivial, docs-only, formatting-only, or mechanically obvious, do not add understanding-check comments.
             - Prefix each understanding-check inline comment with "이해도 확인:".
             - The author is expected to answer in the same inline thread, validate the answer with a local agent if needed, and then resolve the thread.
           # 모델은 11/5 멘토 요청에 따라 claude-opus-5-5로 올렸다.
           claude_args: |
             --model "claude-opus-5-5"
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*)"
