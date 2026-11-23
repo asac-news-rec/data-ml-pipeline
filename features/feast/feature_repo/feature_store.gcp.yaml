@@ -1,0 +1,15 @@
+# GCP 운영 설정. registry는 GCS file, offline은 BigQuery, online은 Valkey.
+# 값은 Airflow 작업 이미지의 환경변수로 받는다. Feast가 ${VAR}를 읽을 때 바꿔 넣는다.
+# dev에서는 dataset을 dev_yoonmo로 쓴다. dev_feast 이름 변경은 MVP 이후.
+project: news_rec
+provider: gcp
+registry: ${FEAST_REGISTRY_PATH}
+offline_store:
+  type: bigquery
+  project_id: ${GCP_PROJECT_ID}
+  dataset: ${FEAST_BQ_TEMP_DATASET}
+  location: asia-northeast3
+online_store:
+  type: redis
+  connection_string: "${VALKEY_HOST}:6379"
+entity_key_serialization_version: 3

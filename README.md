@@ -1,6 +1,20 @@
 # data-ml-pipeline
 Data pipeline (ingest, clean, features) and ML training
 
+## 현재 구성
+
+- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16)가 있다.
+- `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
+- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다.
+- `training/`, `serving/`, `docs/`: [계획] 아직 없다.
+
+## 개발 환경
+
+- Python 3.12. 의존성과 버전은 저장소 루트 `pyproject.toml`과 `uv.lock`으로 고정한다.
+- Feast materialize 작업 이미지: `uv sync --frozen --extra airflow-dag`
+- 학습 Job 이미지: `uv sync --frozen --extra train`
+- lint·테스트 도구는 [미정]이다. 지금은 `python -m unittest discover -s tests -v`로 테스트를 돌린다.
+
 ## 행동 로그 GCS 내보내기
 
 `dags/export_behavior_logs.py`는 PostgreSQL에 커밋된 행동 로그를 GCS에
