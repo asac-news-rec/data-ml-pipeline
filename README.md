@@ -7,6 +7,7 @@ Data pipeline (ingest, clean, features) and ML training
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
 - `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다.
 - `training/`, `serving/`, `docs/`: [계획] 아직 없다.
+- `dags/simulate_readers.py`·`ingest/simulate_readers.py`(#44): [임시] 한 바퀴 시험용 가상 독자 200명의 served·actions 로그를 매시 로깅 서버 내보내기와 같은 경로·줄 형식으로 행동 로그 버킷에 쓴다. 기사는 `feat.article_meta`에서 고르고, actions는 `source=simulator`, served는 `model_version=simulator`로 표시한다. Variable `simulate_readers_enabled=false`로 끄고, 실제 독자 로그가 생기면 지운다. 테스트 `tests/test_simulate_readers.py`.
 
 ## 개발 환경
 
