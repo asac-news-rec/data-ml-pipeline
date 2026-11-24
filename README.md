@@ -3,10 +3,11 @@ Data pipeline (ingest, clean, features) and ML training
 
 ## 현재 구성
 
-- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32)가 있다.
+- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34)가 있다.
+- `transform/`: 정제 코드. `clean_events.py`가 `sql/clean_events.sql`로 `clean.*`을 만든다.
 - `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다.
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
-- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를 검증한다.
+- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다.
 - `training/`, `serving/`, `docs/`: [계획] 아직 없다.
 
 ## 개발 환경
@@ -28,6 +29,22 @@ Data pipeline (ingest, clean, features) and ML training
 - 표가 없으면 첫 적재 때 만든다.
 - Airflow Variable: `feast_work_image`, `gcp_project_id`, `raw_gcs_bucket`(필수), `raw_gcs_prefix`, `raw_bq_dataset`(기본 `raw`), `raw_load_lookback_hours`.
 - 권한: 작업 Pod 서비스 계정에 로그 버킷 객체 나열·읽기, `raw` 데이터셋 쓰기, BigQuery job 실행.
+
+## raw → clean 정제 (`clean_events`)
+
+`dags/clean_events.py`가 같은 시간의 `load_raw`가 끝나길 기다린 뒤 `transform/clean_events.py`를 작업 이미지로 실행한다. 범위는 `load_raw`와 같다(그 시간 + 앞 3시간에 시작한 내보내기 구간).
+
+| 표 | 한 행 | 규칙 |
+|---|---|---|
+| `clean.served` | impression 1건 | `impression_id`로 중복 제거. 파티션 `served_date`(한국 날짜) |
+| `clean.actions` | 행동 1건 | `event_id`(소문자)로 중복 제거, `impression_id`로 served 값을 붙임. 파티션 `event_date` |
+| `clean.orphan_actions` | 짝 served가 아직 없는 행동 | 다음 실행마다 다시 보고, 짝이 생기면 `clean.actions`로 옮김 |
+| `clean.rejected_actions` | 버린 행동 + 이유 | `fraud_click`: 첫 exposure 시작(없으면 `served_at`) 뒤 0.1초 안의 article_open (11/15 멘토링). `invalid_event`: 계약 밖 값 |
+
+- 쓰기는 모두 MERGE라 같은 시간을 다시 돌려도 행이 늘지 않는다.
+- `is_bot`은 봇 기준이 정해지지 않아 모두 false다.
+- 열은 청사진 overview.html 인터페이스 규약 ⑤를 따른다. 규약 밖으로 `clean.served.received_at`을 더 둔다(늦게 온 행 찾기).
+- 시험: `CLEAN_BQ_DATASET=dev_<이름> CLEAN_TABLE_PREFIX=clean_ RAW_BQ_DATASET=dev_<이름>`로 개인 dataset에 만든다.
 
 ## 행동 로그 GCS 내보내기
 
