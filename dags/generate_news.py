@@ -9,7 +9,7 @@ from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperato
 
 
 # 생성기 이미지의 커밋 SHA는 업로드한 버전으로 교체합니다.
-GENERATOR_IMAGE = "asia-northeast3-docker.pkg.dev/final-project-513508/news-rec/news-generator:54317e07df0dc8076c2949f8d66d0368bbdd4af6"
+GENERATOR_IMAGE = "asia-northeast3-docker.pkg.dev/final-project-513508/news-rec/news-generator:f4eed6f1823a4070b8c9ea68b4128045c6cf0f99"
 POD_TEMPLATE_FILE = str(Path(__file__).resolve().parent / "pod_templates" / "news-generator.yaml")
 TEXT_MODEL = "google/gemini-2.5-flash"
 IMAGE_MODEL = "black-forest-labs/flux.2-klein-4b"
