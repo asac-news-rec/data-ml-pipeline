@@ -6,10 +6,15 @@ Feast는 Airflow 이미지에 없으므로 Python 3.12 작업 이미지를 Kuber
 materialize는 Valkey뿐 아니라 registry에도 적재 구간을 쓴다. 그래서 Airflow 서비스 계정에는
 registry 읽기·쓰기 권한이 필요하고, main `feast apply`와 겹치지 않게 apply 전에 DAG를 pause한다.
 
+같은 시간의 `build_feast_sources`(Feast 원천 표 생성)가 끝난 뒤에 적재한다. 두 DAG는 start_date·schedule이
+같아서 logical date가 맞물린다. 원천 표를 아직 로컬 스크립트로 만드는 동안에는 Variable
+`feast_wait_for_sources=false`로 기다리지 않게 한다.
+
 Airflow Variables:
   feast_work_image, feast_registry_path, valkey_host,
   gcp_project_id, feast_bq_dataset, feast_bq_temp_dataset,
-  feast_full_materialize, feast_materialize_start
+  feast_full_materialize, feast_materialize_start,
+  feast_wait_for_sources(선택, 기본 true)
 """
 import os
 from datetime import datetime, timedelta
@@ -17,7 +22,8 @@ from datetime import datetime, timedelta
 from airflow.exceptions import AirflowException
 from airflow.models import Variable
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import BranchPythonOperator, PythonOperator
+from airflow.providers.standard.sensors.external_task import ExternalTaskSensor
 from airflow.sdk import DAG
 from kubernetes.client import models as k8s
 
@@ -31,6 +37,12 @@ REQUIRED_VARS = [
     "feast_bq_dataset",
     "feast_bq_temp_dataset",
 ]
+
+
+def wait_or_skip(**context) -> str:
+    """원천 표 DAG를 기다릴지 정한다. 기다리지 않으면 바로 check_config로 간다."""
+    wait = str(Variable.get("feast_wait_for_sources", default_var="true")).lower() == "true"
+    return "wait_feast_sources" if wait else "check_config"
 
 
 def check_config(**context) -> None:
@@ -52,7 +64,17 @@ with DAG(
     default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
     tags=["feast", "feature"],
 ) as dag:
-    check = PythonOperator(task_id="check_config", python_callable=check_config)
+    decide = BranchPythonOperator(task_id="decide_wait", python_callable=wait_or_skip)
+    wait_sources = ExternalTaskSensor(
+        task_id="wait_feast_sources",
+        external_dag_id="build_feast_sources",
+        external_task_id="build_feast_sources",
+        mode="reschedule",
+        poke_interval=120,
+        timeout=60 * 60,
+    )
+    check = PythonOperator(task_id="check_config", python_callable=check_config,
+                           trigger_rule="none_failed_min_one_success")
 
     materialize = KubernetesPodOperator(
         task_id="materialize",
@@ -82,4 +104,5 @@ with DAG(
         on_finish_action="delete_pod",
     )
 
-    check >> materialize
+    decide >> [wait_sources, check]
+    wait_sources >> check >> materialize
