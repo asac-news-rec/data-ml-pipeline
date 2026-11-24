@@ -3,8 +3,8 @@ Data pipeline (ingest, clean, features) and ML training
 
 ## 현재 구성
 
-- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34), 기사 임베딩 `embed_articles.py`(#36)가 있다.
-- `transform/`: 정제 코드. `clean_events.py`가 `sql/clean_events.sql`로 `clean.*`을 만든다.
+- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34), 기사 임베딩 `embed_articles.py`(#36), Feast 원천 표 `build_feast_sources.py`(#38)가 있다.
+- `transform/`: 정제 코드. `clean_events.py`가 `sql/clean_events.sql`로 `clean.*`을 만든다. `build_feast_sources.py`는 `clean.actions` + `feat.article_*`로 Feast 원천 표 4개를 매시 다시 만든다(SQL `transform/sql/build_feast_sources.sql`, `prepare_sources.py`와 같은 계산).
 - `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다. `embed_articles.py`가 Cloud SQL 새 기사를 multilingual-e5-base로 임베딩해 `feat.article_embedding`·`feat.article_meta`에 넣는다.
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
 - `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다.

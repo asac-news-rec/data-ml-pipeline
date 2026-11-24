@@ -45,13 +45,13 @@
 - **[현재]** README, 에이전트 하네스(`AGENTS.md`),
   협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 3개
   (`branch-name-policy.yml`, `claude.yml`, `feast-apply.yml`), `.gitignore`,
-  저장소 루트 `pyproject.toml`·`uv.lock`, Airflow DAG 6개
+  저장소 루트 `pyproject.toml`·`uv.lock`, Airflow DAG 7개
   (`dags/hello_airflow.py`(#12), `dags/export_behavior_logs.py`(#14),
   `dags/materialize_feast.py`(#16), `dags/load_raw.py`(#32), `dags/clean_events.py`(#34),
-  `dags/embed_articles.py`(#36)), GCS → BigQuery raw 적재
+  `dags/embed_articles.py`(#36), `dags/build_feast_sources.py`(#38)), GCS → BigQuery raw 적재
   `ingest/load_raw.py`, raw → clean 정제 `transform/clean_events.py`, 기사 임베딩
-  `ingest/embed_articles.py`, 테스트 `tests/test_load_raw.py`·`tests/test_clean_events.py`·
-  `tests/test_embed_articles.py`, 행동 로그 내보내기 구간 테스트
+  `ingest/embed_articles.py`, Feast 원천 표 `transform/build_feast_sources.py`, 테스트 `tests/test_load_raw.py`·
+  `tests/test_clean_events.py`·`tests/test_embed_articles.py`·`tests/test_build_feast_sources.py`, 행동 로그 내보내기 구간 테스트
   `tests/test_export_bounds.py`, Feast 피처 스토어 `features/feast/`(로컬 parquet +
   SQLite, BigQuery 오프라인, GCS registry + Valkey 온라인)가 있습니다. 행동 로그
   내보내기·raw 적재·clean 정제 DAG의 운영 Airflow 3.2.2 실검증은 아직 완료하지 않았고, 집계
