@@ -3,9 +3,9 @@ Data pipeline (ingest, clean, features) and ML training
 
 ## 현재 구성
 
-- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34)가 있다.
+- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34), 기사 임베딩 `embed_articles.py`(#36)가 있다.
 - `transform/`: 정제 코드. `clean_events.py`가 `sql/clean_events.sql`로 `clean.*`을 만든다.
-- `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다.
+- `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다. `embed_articles.py`가 Cloud SQL 새 기사를 multilingual-e5-base로 임베딩해 `feat.article_embedding`·`feat.article_meta`에 넣는다.
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
 - `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다.
 - `training/`, `serving/`, `docs/`: [계획] 아직 없다.
@@ -14,6 +14,7 @@ Data pipeline (ingest, clean, features) and ML training
 
 - Python 3.12. 의존성과 버전은 저장소 루트 `pyproject.toml`과 `uv.lock`으로 고정한다.
 - Feast materialize 작업 이미지: `uv sync --frozen --extra airflow-dag`
+- 기사 임베딩 작업 이미지: `uv sync --frozen --extra embed` (torch는 CPU 빌드). 모델 `intfloat/multilingual-e5-base`를 이미지에 미리 내려받아 두고 Pod는 `HF_HUB_OFFLINE=1`로 돈다.
 - 학습 Job 이미지: `uv sync --frozen --extra train`
 - lint·테스트 도구는 [미정]이다. 지금은 `python -m unittest discover -s tests -v`로 테스트를 돌린다.
 
@@ -45,6 +46,17 @@ Data pipeline (ingest, clean, features) and ML training
 - `is_bot`은 봇 기준이 정해지지 않아 모두 false다.
 - 열은 청사진 overview.html 인터페이스 규약 ⑤를 따른다. 규약 밖으로 `clean.served.received_at`을 더 둔다(늦게 온 행 찾기).
 - 시험: `CLEAN_BQ_DATASET=dev_<이름> CLEAN_TABLE_PREFIX=clean_ RAW_BQ_DATASET=dev_<이름>`로 개인 dataset에 만든다.
+
+## 기사 임베딩 (`embed_articles`)
+
+`dags/embed_articles.py`가 매시 임베딩 작업 이미지로 `ingest/embed_articles.py`를 실행한다.
+
+- 입력: Cloud SQL `public.news_articles`(backend `generate/load_postgres.py`). 접속은 `cloud-sql-proxy`, 비밀번호는 Secret Manager.
+- 글: `passage: 제목 부제 요약` (로컬 `article_embedding/embed.py`와 같다). 512토큰을 넘으면 잘린다(MVP 뒤에 다룬다).
+- 출력: `feat.article_embedding`(article_id, embedding 768칸·길이 1, model_name, model_version, created_at), `feat.article_meta`(article_id, category, subcategory, tags, publisher_id, published_at, clickbait_score, copied_at). 열은 청사진 overview.html 인터페이스 규약 ⑤를 따르고 `subcategory`를 더 둔다.
+- 중복 방지: 같은 모델·버전으로 이미 임베딩한 기사는 건너뛴다. 메타는 `article_id`가 없을 때만 넣는다.
+- Airflow Variable: `embed_work_image`, `gcp_project_id`, `embed_db_user`, `embed_db_password_secret`(필수), `embed_db_name`, `feat_bq_dataset`, `embed_model_revision`, `embed_limit`.
+- 권한: 작업 Pod 계정에 Secret 읽기, `feat` 쓰기, BigQuery job 실행. DB는 `news_articles` 읽기 전용 계정.
 
 ## 행동 로그 GCS 내보내기
 
