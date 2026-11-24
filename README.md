@@ -3,9 +3,10 @@ Data pipeline (ingest, clean, features) and ML training
 
 ## 현재 구성
 
-- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16)가 있다.
+- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32)가 있다.
+- `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다.
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
-- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다.
+- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를 검증한다.
 - `training/`, `serving/`, `docs/`: [계획] 아직 없다.
 
 ## 개발 환경
@@ -14,6 +15,19 @@ Data pipeline (ingest, clean, features) and ML training
 - Feast materialize 작업 이미지: `uv sync --frozen --extra airflow-dag`
 - 학습 Job 이미지: `uv sync --frozen --extra train`
 - lint·테스트 도구는 [미정]이다. 지금은 `python -m unittest discover -s tests -v`로 테스트를 돌린다.
+
+## GCS → BigQuery raw 적재 (`load_raw`)
+
+`dags/load_raw.py`가 매시 작업 이미지(`airflow-dag` 묶음)로 `ingest/load_raw.py`를 실행한다.
+
+- 입력: `export_behavior_logs`가 쓴 `{prefix}/served|actions/interval_start={UTC}/interval_end={UTC}/part-{job_id}.jsonl.gz`.
+- 범위: `data_interval_start`가 든 UTC 한 시간과 앞 `raw_load_lookback_hours`(기본 3)시간에 **시작하는** 구간의 파일.
+- 출력: `raw.served`(`impression_id`, `request_id`, `served_at`), `raw.actions`(`event_id`, `event_type`, `event_time`, `impression_id`, `event_type` 클러스터링). 두 표 모두 `payload`(줄 전체 JSON), `source_file`, `load_date`, `loaded_at`을 가진다. 열은 청사진 overview.html 인터페이스 규약 ⑤를 따른다.
+- `load_date`는 파일 구간 시작의 한국 날짜이고 파티션 열이다.
+- 중복 방지: GCS 객체는 덮어쓰지 않으므로 `source_file`이 이미 표에 있으면 건너뛴다. 같은 시간을 다시 돌려도 행이 늘지 않는다. 새 파일은 load job 하나로 넣어 실패하면 아무 행도 남지 않는다.
+- 표가 없으면 첫 적재 때 만든다.
+- Airflow Variable: `feast_work_image`, `gcp_project_id`, `raw_gcs_bucket`(필수), `raw_gcs_prefix`, `raw_bq_dataset`(기본 `raw`), `raw_load_lookback_hours`.
+- 권한: 작업 Pod 서비스 계정에 로그 버킷 객체 나열·읽기, `raw` 데이터셋 쓰기, BigQuery job 실행.
 
 ## 행동 로그 GCS 내보내기
 

@@ -45,12 +45,13 @@
 - **[현재]** README, 에이전트 하네스(`AGENTS.md`),
   협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 3개
   (`branch-name-policy.yml`, `claude.yml`, `feast-apply.yml`), `.gitignore`,
-  저장소 루트 `pyproject.toml`·`uv.lock`, Airflow DAG 3개
+  저장소 루트 `pyproject.toml`·`uv.lock`, Airflow DAG 4개
   (`dags/hello_airflow.py`(#12), `dags/export_behavior_logs.py`(#14),
-  `dags/materialize_feast.py`(#16)), 행동 로그 내보내기 구간 테스트
+  `dags/materialize_feast.py`(#16), `dags/load_raw.py`(#32)), GCS → BigQuery raw 적재
+  `ingest/load_raw.py`, 테스트 `tests/test_load_raw.py`, 행동 로그 내보내기 구간 테스트
   `tests/test_export_bounds.py`, Feast 피처 스토어 `features/feast/`(로컬 parquet +
   SQLite, BigQuery 오프라인, GCS registry + Valkey 온라인)가 있습니다. 행동 로그
-  내보내기 DAG의 운영 Airflow 3.2.2 실검증은 아직 완료하지 않았고, 적재·정제·집계
+  내보내기·raw 적재 DAG의 운영 Airflow 3.2.2 실검증은 아직 완료하지 않았고, 정제·집계
   DAG는 아직 없습니다.
 - **[계획]** 아래 구조로 만들 예정입니다. 경로·이름은 바뀔 수 있습니다.
 
