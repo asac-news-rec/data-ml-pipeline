@@ -32,3 +32,21 @@ MLFLOW_TRACKING_URI=http://mlflow.mlflow.svc.cluster.local:5000 \
 ```
 
 MLflow 서버는 클러스터 안에서만 접근된다. 로컬에서는 `MLFLOW_TRACKING_URI`를 비워 두면 모델 파일만 저장한다.
+
+## 매일 자동 학습 (`dags/train_pctr.py`)
+
+매일 02:30 KST에 돈다. 사람이 하는 단계는 없다.
+
+1. `training/build_training_set.py`: `clean.served`·`clean.actions`로 label을 만들고 Feast offline에서 served 시점 피처를 붙인다.
+   최근 14일, 마지막 24시간은 valid, 끝 3시간은 클릭이 도착하지 않았을 수 있어 뺀다(모두 임시값).
+2. `training/train_lgbm.py`: 학습하고 MLflow에 등록한다. champion과 비교한다.
+3. champion이 바뀌었으면 추론 서버를 롤링 재시작하고 새 Pod가 준비될 때까지 기다린다.
+
+| 종료 코드 | 뜻 | Airflow |
+|---|---|---|
+| 0 | champion을 바꿨다 | 추론 서버 재시작 |
+| 98 | 새 모델이 더 낫지 않다 | skipped |
+| 99 | 클릭이 부족하다 | skipped |
+
+재시작에는 Airflow worker 계정의 `inference` 네임스페이스 deployment `get`·`patch` 권한이 필요하다.
+추론 서버는 `MODEL_URI=models:/pctr@champion`으로 떠 있어야 한다.
