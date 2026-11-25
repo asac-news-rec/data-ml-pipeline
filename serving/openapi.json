@@ -1,0 +1,341 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "news-rec inference",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readyz",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Readyz Readyz Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "모델·피처 저장소를 쓸 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unavailable"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/model": {
+      "get": {
+        "summary": "Model Version",
+        "operationId": "model_version_v1_model_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Model Version V1 Model Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "모델·피처 저장소를 쓸 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unavailable"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rank": {
+      "post": {
+        "summary": "Rank",
+        "operationId": "rank_v1_rank_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RankRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RankResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "필드가 없거나 형식이 틀림",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "모델·피처 저장소를 쓸 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unavailable"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BadRequest": {
+        "properties": {
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "field": {
+            "type": "string",
+            "title": "Field"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error",
+          "field"
+        ],
+        "title": "BadRequest"
+      },
+      "Context": {
+        "properties": {
+          "request_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Request Time"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_time"
+        ],
+        "title": "Context"
+      },
+      "RankRequest": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "reader_id": {
+            "type": "string",
+            "title": "Reader Id"
+          },
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Candidates"
+          },
+          "context": {
+            "$ref": "#/components/schemas/Context"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "reader_id",
+          "candidates",
+          "context"
+        ],
+        "title": "RankRequest",
+        "example": {
+          "candidates": [
+            "news-00000000000000000000000000000001",
+            "news-00000000000000000000000000000002"
+          ],
+          "context": {
+            "device": "mobile",
+            "request_time": "2026-11-25T10:00:00+09:00"
+          },
+          "reader_id": "019a0000-0000-7000-8000-000000000002",
+          "request_id": "019a0000-0000-7000-8000-000000000001",
+          "top_k": 2
+        }
+      },
+      "RankResponse": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "features_as_of": {
+            "type": "string",
+            "title": "Features As Of"
+          },
+          "ranked": {
+            "items": {
+              "$ref": "#/components/schemas/RankedItem"
+            },
+            "type": "array",
+            "title": "Ranked"
+          },
+          "defaulted": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonItem"
+            },
+            "type": "array",
+            "title": "Defaulted"
+          },
+          "unscored": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonItem"
+            },
+            "type": "array",
+            "title": "Unscored"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "model_version",
+          "features_as_of",
+          "ranked",
+          "defaulted",
+          "unscored"
+        ],
+        "title": "RankResponse"
+      },
+      "RankedItem": {
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "title": "Article Id"
+          },
+          "pctr": {
+            "type": "number",
+            "title": "Pctr"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_id",
+          "pctr",
+          "rank"
+        ],
+        "title": "RankedItem"
+      },
+      "ReasonItem": {
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "title": "Article Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_id",
+          "reason"
+        ],
+        "title": "ReasonItem"
+      },
+      "Unavailable": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "Unavailable"
+      }
+    }
+  }
+}

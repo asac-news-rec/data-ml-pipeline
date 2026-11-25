@@ -6,9 +6,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from feast import FeatureStore
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .features import ARTICLE_ID, fetch_online, missing_flags, to_matrix
 from .model import Model
@@ -29,6 +30,14 @@ class Context(BaseModel):
 
 
 class RankRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "request_id": "019a0000-0000-7000-8000-000000000001",
+        "reader_id": "019a0000-0000-7000-8000-000000000002",
+        "candidates": ["news-" + "0" * 31 + "1", "news-" + "0" * 31 + "2"],
+        "context": {"request_time": "2026-11-25T10:00:00+09:00", "device": "mobile"},
+        "top_k": 2,
+    }})
+
     request_id: str
     reader_id: str
     candidates: list[str] = Field(min_length=1, max_length=200)
@@ -45,6 +54,15 @@ class RankedItem(BaseModel):
 class ReasonItem(BaseModel):
     article_id: str
     reason: str
+
+
+class BadRequest(BaseModel):
+    error: str
+    field: str
+
+
+class Unavailable(BaseModel):
+    detail: str
 
 
 class RankResponse(BaseModel):
@@ -79,7 +97,24 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="news-rec inference", lifespan=lifespan)
+app = FastAPI(title="news-rec inference", version="1.0.0", lifespan=lifespan)
+UNAVAILABLE = {503: {"model": Unavailable, "description": "모델·피처 저장소를 쓸 수 없음"}}
+
+
+def openapi() -> dict:
+    """검증 오류를 400으로 돌려주므로 FastAPI가 자동으로 넣는 422를 명세에서 뺀다."""
+    if not app.openapi_schema:
+        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        for path in schema["paths"].values():
+            for operation in path.values():
+                operation["responses"].pop("422", None)
+        for name in ("HTTPValidationError", "ValidationError"):
+            schema["components"]["schemas"].pop(name, None)
+        app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = openapi
 
 
 @app.exception_handler(RequestValidationError)
@@ -94,21 +129,23 @@ def healthz() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/readyz")
+@app.get("/readyz", responses=UNAVAILABLE)
 def readyz() -> dict:
     if not app.state.ready:
         raise HTTPException(503, detail=app.state.error or "not ready")
     return {"status": "ready", "model_version": app.state.model.version}
 
 
-@app.get("/v1/model")
+@app.get("/v1/model", responses=UNAVAILABLE)
 def model_version() -> dict:
     if not app.state.ready:
         raise HTTPException(503, detail=app.state.error or "not ready")
     return {"model_version": app.state.model.version}
 
 
-@app.post("/v1/rank", response_model=RankResponse)
+@app.post("/v1/rank", response_model=RankResponse, responses={
+    400: {"model": BadRequest, "description": "필드가 없거나 형식이 틀림"}, **UNAVAILABLE,
+})
 def rank(request: RankRequest) -> RankResponse:
     if not app.state.ready:
         raise HTTPException(503, detail=app.state.error or "not ready")

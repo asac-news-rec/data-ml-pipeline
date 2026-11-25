@@ -38,6 +38,14 @@ docker build -f serving/Dockerfile -t <registry>/inference-server:<커밋 SHA 7�
 
 모델은 이미지에 넣지 않는다. Python 3.12, 포트 8080, 비루트 사용자(uid 10001)로 돈다.
 
+## API 명세
+
+`serving/openapi.json`(OpenAPI 3.1)이 명세다. 서버를 띄우면 `/docs`(화면)와 `/openapi.json`에서도 본다. 코드를 바꾸면 다시 만든다.
+
+```bash
+uv run --frozen --extra serving python -c "import json; from serving.app import app; print(json.dumps(app.openapi(), ensure_ascii=False, indent=2))" > serving/openapi.json
+```
+
 ## 확인
 
 ```bash
