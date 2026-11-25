@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "news-rec inference",
-    "description": "뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.\n\n팀 공통 [인터페이스 규약 ② 뉴스 백엔드 → 추론 서버](https://asac-news-rec.github.io/blueprint/overview.html#c2)를 따른다.\n\n| API | 누가 부르나 | 언제 |\n|---|---|---|\n| `POST /v1/rank` | 뉴스 WAS | 피드 요청마다 한 번 |\n| `GET /healthz` | 쿠버네티스 liveness | 주기적으로 |\n| `GET /readyz` | 쿠버네티스 readiness | 주기적으로 |\n| `GET /v1/model` | 사람 | 올라간 모델을 확인할 때 |\n\nWAS는 `POST /v1/rank`만 부른다.\n\n- 순서: 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로, `unscored`는 뒤에 최신순으로 붙여 응답 → 반환 기록 저장\n- 반환 기록: `ranked[].pctr` → `score`, `model_version` → `model_version`. `features_as_of`는 임시값이라 NULL로 둔다.\n- 실패(400·503·시간 초과·연결 실패): 대체 응답을 보내고 반환 기록은 `score` NULL, `model_version` `fallback`.\n  규약 ②의 대체 순서는 인기순(최근 1시간 열기 수)이다. 어떤 순서로 대체할지는 WAS가 정한다.\n- 시간: 규약 ②의 WAS 타임아웃은 500ms(부하 시험으로 조정), 응답 목표는 P99 200ms다(아직 Valkey에서 재지 않음).\n- 규약과 다른 점: `features_as_of`는 아직 `request_time`을 돌려준다. `UNKNOWN_ARTICLE`은 ID 형식만 보고, 형식이 맞지만 없는 기사는\n  `ARTICLE_FEATURES_NOT_FOUND`로 점수를 낸다.\n- 인증 없음. 클러스터 내부에서만 부른다.\n",
+    "description": "뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.\n\n\n| API | 누가 부르나 | 언제 |\n|---|---|---|\n| `POST /v1/rank` | 뉴스 WAS | 피드 요청마다 한 번 |\n| `GET /healthz` | 쿠버네티스 liveness | 주기적으로 |\n| `GET /readyz` | 쿠버네티스 readiness | 주기적으로 |\n| `GET /v1/model` | 사람 | 올라간 모델을 확인할 때 |\n\nWAS는 `POST /v1/rank`만 부른다.\n\n- 순서: 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로, `unscored`는 뒤에 붙여 응답 → 반환 기록 저장\n- 반환 기록: `ranked[].pctr` → `score`, `model_version` → `model_version`. `features_as_of`는 임시값이라 NULL로 둔다.\n- 실패(400·503·시간 초과·연결 실패): WAS가 추천 없이 응답한다. 이때 어떤 순서로 보여 줄지와 타임아웃은 WAS가 정한다.\n  반환 기록은 `score` NULL, `model_version` `fallback`을 제안한다.\n- 응답 시간 목표: P99 200ms(아직 Valkey에서 재지 않음)\n- 아직 안 되는 것: `features_as_of`는 `request_time`을 그대로 돌려준다. `UNKNOWN_ARTICLE`은 ID 형식만 보고, 형식이 맞지만 없는 기사는\n  `ARTICLE_FEATURES_NOT_FOUND`로 점수를 낸다.\n- 인증 없음. 클러스터 내부에서만 부른다.\n",
     "version": "1.0.0"
   },
   "paths": {
@@ -120,7 +120,7 @@
     "/v1/rank": {
       "post": {
         "summary": "후보 기사 순위 매기기",
-        "description": "독자 1명과 후보 기사를 받아 기사를 열 확률(pctr)이 높은 순서로 돌려준다.\n\n- 누가·언제: 뉴스 WAS가 피드 요청마다 후보를 조회한 뒤 한 번 부른다. 기사마다 따로 부르지 않는다.\n- 200: ranked 순서대로 보여 주고 unscored를 뒤에 최신순으로 붙인다. 신규 독자도 200이다.\n- 400: 요청이 틀렸다(코드 버그). 대체 응답을 보내고 오류 로그를 남긴다.\n- 503·시간 초과·연결 실패: 대체 응답을 보낸다. 반환 기록은 score=NULL, model_version=\"fallback\".",
+        "description": "독자 1명과 후보 기사를 받아 기사를 열 확률(pctr)이 높은 순서로 돌려준다.\n\n- 누가·언제: 뉴스 WAS가 피드 요청마다 후보를 조회한 뒤 한 번 부른다. 기사마다 따로 부르지 않는다.\n- 200: ranked 순서대로 보여 주고 unscored를 뒤에 붙인다. 신규 독자도 200이다.\n- 400: 요청이 틀렸다(코드 버그). 추천 없이 응답하고 오류 로그를 남긴다.\n- 503·시간 초과·연결 실패: 추천 없이 응답한다. 반환 기록은 score=NULL, model_version=\"fallback\"을 제안한다.",
         "operationId": "rank_v1_rank_post",
         "requestBody": {
           "content": {
@@ -551,7 +551,7 @@
             },
             "type": "array",
             "title": "Unscored",
-            "description": "점수를 내지 못한 기사. ranked에 없다. ranked 뒤에 최신순으로 붙인다(score는 NULL)."
+            "description": "점수를 내지 못한 기사. ranked에 없다. ranked 뒤에 붙인다(score는 NULL)."
           }
         },
         "type": "object",
@@ -638,9 +638,5 @@
         "title": "Unavailable"
       }
     }
-  },
-  "externalDocs": {
-    "description": "인터페이스 규약 ② 뉴스 백엔드 → 추론 서버",
-    "url": "https://asac-news-rec.github.io/blueprint/overview.html#c2"
   }
 }

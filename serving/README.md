@@ -1,6 +1,6 @@
 # 추론 서버 `/v1/rank`
 
-뉴스 백엔드가 후보 기사를 보내면 Feast online store 피처로 PCTR을 계산해 순위를 돌려준다. 요청·응답은 팀 공통 [인터페이스 규약 ② 뉴스 백엔드 → 추론 서버](https://asac-news-rec.github.io/blueprint/overview.html#c2)를 따르고, 필드별 상세는 `serving/openapi.json`에 적는다.
+뉴스 백엔드가 후보 기사를 보내면 Feast online store 피처로 PCTR을 계산해 순위를 돌려준다. 요청·응답은 `serving/openapi.json`에 적는다. 설계 배경은 [청사진](https://asac-news-rec.github.io/blueprint/overview.html#c2)에 있다.
 
 ## 실행
 
