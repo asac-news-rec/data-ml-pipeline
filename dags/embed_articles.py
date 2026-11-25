@@ -54,7 +54,7 @@ with DAG(
         service_account_name=SERVICE_ACCOUNT,
         image_pull_policy="IfNotPresent",
         container_resources=k8s.V1ResourceRequirements(
-            requests={"cpu": "1", "memory": "2Gi"},
+            requests={"cpu": "500m", "memory": "2Gi"},
             limits={"cpu": "2", "memory": "4Gi"},
         ),
         env_vars={
