@@ -43,7 +43,7 @@ class RankRequest(BaseModel):
     reader_id: str = Field(description="익명 독자 ID(쿠키에서 검증한 reader_id). 독자 피처를 찾는 열쇠다.")
     candidates: list[str] = Field(min_length=1, max_length=200, description=(
         "점수를 매길 article_id 목록(news_articles.id, news- 뒤 16진수 32자). 1~200개, 권장 20~30개. "
-        "현재 화면에 보여 줄 순서(최신순)대로 넣는다. 이 순서가 모델의 position(1부터) 피처가 된다. 중복 없이 넣는다."))
+        "추천 전에 보여 줄 순서대로 넣는다. 이 순서가 모델의 position(1부터) 피처가 된다. 중복 없이 넣는다."))
     context: Context = Field(description="요청 시점의 정보")
     top_k: int | None = Field(default=None, ge=1, description=(
         "점수 상위 몇 개를 돌려받을지. 1 이상, candidates 개수 이하. 생략하거나 null이면 점수를 낸 후보를 모두 돌려준다. "
@@ -88,7 +88,7 @@ class RankResponse(BaseModel):
     defaulted: list[ReasonItem] = Field(description=(
         "피처 일부가 없이 점수를 낸 기사. ranked에도 들어 있다. 오류가 아니며 순서를 바꿀 필요가 없다(기록용)."))
     unscored: list[ReasonItem] = Field(description=(
-        "점수를 내지 못한 기사. ranked에 없다. ranked 뒤에 원래 순서대로 붙인다(score는 NULL)."))
+        "점수를 내지 못한 기사. ranked에 없다. ranked 뒤에 최신순으로 붙인다(score는 NULL)."))
 
 
 def load_store() -> FeatureStore:
@@ -113,7 +113,10 @@ async def lifespan(app: FastAPI):
     yield
 
 
-DESCRIPTION = """뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.
+CONTRACT = "https://asac-news-rec.github.io/blueprint/overview.html#c2"
+DESCRIPTION = f"""뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.
+
+팀 공통 [인터페이스 규약 ② 뉴스 백엔드 → 추론 서버]({CONTRACT})를 따른다.
 
 | API | 누가 부르나 | 언제 |
 |---|---|---|
@@ -124,12 +127,17 @@ DESCRIPTION = """뉴스 피드의 후보 기사에 점수를 매겨 순서를 �
 
 WAS는 `POST /v1/rank`만 부른다.
 
-- 순서: 최신순 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로 + `unscored`를 뒤에 붙여 응답 → 반환 기록 저장
+- 순서: 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로, `unscored`는 뒤에 최신순으로 붙여 응답 → 반환 기록 저장
 - 반환 기록: `ranked[].pctr` → `score`, `model_version` → `model_version`. `features_as_of`는 임시값이라 NULL로 둔다.
-- 실패(400·503·시간 초과·연결 실패): 최신순 그대로 응답하고 `score`는 NULL, `model_version`은 `fallback`
+- 실패(400·503·시간 초과·연결 실패): 대체 응답을 보내고 반환 기록은 `score` NULL, `model_version` `fallback`.
+  규약 ②의 대체 순서는 인기순(최근 1시간 열기 수)이다. 어떤 순서로 대체할지는 WAS가 정한다.
+- 시간: 규약 ②의 WAS 타임아웃은 500ms(부하 시험으로 조정), 응답 목표는 P99 200ms다(아직 Valkey에서 재지 않음).
+- 규약과 다른 점: `features_as_of`는 아직 `request_time`을 돌려준다. `UNKNOWN_ARTICLE`은 ID 형식만 보고, 형식이 맞지만 없는 기사는
+  `ARTICLE_FEATURES_NOT_FOUND`로 점수를 낸다.
 - 인증 없음. 클러스터 내부에서만 부른다.
 """
-app = FastAPI(title="news-rec inference", version="1.0.0", description=DESCRIPTION, lifespan=lifespan)
+app = FastAPI(title="news-rec inference", version="1.0.0", description=DESCRIPTION, lifespan=lifespan,
+              openapi_external_docs={"description": "인터페이스 규약 ② 뉴스 백엔드 → 추론 서버", "url": CONTRACT})
 
 
 def documented(model, description: str, values: dict) -> dict:
@@ -142,7 +150,8 @@ UNAVAILABLE = {503: documented(Unavailable, "모델·피처 저장소를 쓸 수
 def openapi() -> dict:
     """검증 오류를 400으로 돌려주므로 FastAPI가 자동으로 넣는 422를 명세에서 뺀다."""
     if not app.openapi_schema:
-        schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+        schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes,
+                             external_docs=app.openapi_external_docs)
         for path in schema["paths"].values():
             for operation in path.values():
                 operation["responses"].pop("422", None)
@@ -195,10 +204,10 @@ def model_version() -> dict:
 def rank(request: RankRequest = Body(openapi_examples=examples.REQUESTS)) -> RankResponse:
     """독자 1명과 후보 기사를 받아 기사를 열 확률(pctr)이 높은 순서로 돌려준다.
 
-    - 누가·언제: 뉴스 WAS가 피드 요청마다 후보(최신순 한 페이지)를 조회한 뒤 한 번 부른다. 기사마다 따로 부르지 않는다.
-    - 200: ranked 순서대로 보여 주고 unscored를 뒤에 붙인다. 신규 독자도 200이다.
-    - 400: 요청이 틀렸다(코드 버그). 최신순으로 응답하고 오류 로그를 남긴다.
-    - 503·시간 초과·연결 실패: 최신순으로 응답한다. 반환 기록은 score=NULL, model_version="fallback".
+    - 누가·언제: 뉴스 WAS가 피드 요청마다 후보를 조회한 뒤 한 번 부른다. 기사마다 따로 부르지 않는다.
+    - 200: ranked 순서대로 보여 주고 unscored를 뒤에 최신순으로 붙인다. 신규 독자도 200이다.
+    - 400: 요청이 틀렸다(코드 버그). 대체 응답을 보내고 오류 로그를 남긴다.
+    - 503·시간 초과·연결 실패: 대체 응답을 보낸다. 반환 기록은 score=NULL, model_version="fallback".
     """
     if not app.state.ready:
         raise HTTPException(503, detail="not ready")
