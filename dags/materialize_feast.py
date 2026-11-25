@@ -15,6 +15,9 @@ Airflow Variables:
   gcp_project_id, feast_bq_dataset, feast_bq_temp_dataset,
   feast_full_materialize, feast_materialize_start,
   feast_wait_for_sources(선택, 기본 true)
+
+feast_bq_temp_dataset은 `프로젝트.데이터셋`과 `데이터셋` 둘 다 받는다. Feast BigQuery offline store가
+앞에 프로젝트를 붙이므로 작업 Pod에는 마지막 `.` 뒤의 데이터셋 이름만 넘긴다.
 """
 import os
 from datetime import datetime, timedelta
@@ -98,7 +101,7 @@ with DAG(
             "VALKEY_HOST": "{{ var.value.valkey_host }}",
             "GCP_PROJECT_ID": "{{ var.value.gcp_project_id }}",
             "FEAST_BQ_DATASET": "{{ var.value.feast_bq_dataset }}",
-            "FEAST_BQ_TEMP_DATASET": "{{ var.value.feast_bq_temp_dataset }}",
+            "FEAST_BQ_TEMP_DATASET": "{{ var.value.feast_bq_temp_dataset.split('.')[-1] }}",
         },
         get_logs=True,
         on_finish_action="delete_pod",
