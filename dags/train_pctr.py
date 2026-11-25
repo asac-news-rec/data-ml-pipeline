@@ -96,7 +96,7 @@ with DAG(
         # 가짜 로그 103,244행 학습의 최대 메모리가 2.7GB였다(로컬).
         container_resources=k8s.V1ResourceRequirements(
             requests={"cpu": "500m", "memory": "3Gi"},
-            limits={"cpu": "2", "memory": "6Gi"},
+            limits={"cpu": "2", "memory": "5Gi"},
         ),
         env_vars={
             "GCP_PROJECT_ID": "{{ var.value.gcp_project_id }}",
