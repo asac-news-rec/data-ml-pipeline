@@ -4,6 +4,9 @@
 같은 경로·형식으로 행동 로그 버킷에 쓴다. 다음 `load_raw` 실행이 앞 3시간을 함께 보므로
 (raw_load_lookback_hours) 이 DAG가 조금 늦게 끝나도 다음 시간에 적재된다.
 
+가짜 표시는 clean.served.model_version='simulator', clean.actions.source='simulator'까지 남는다.
+Feast 원천 표에는 이 열이 없다. 실제 로그로 학습하기 전에 clean에서 걸러 원천 표를 다시 만들어야 한다.
+
 실제 독자 로그가 생기면 Variable `simulate_readers_enabled`를 false로 두고, 이후 DAG를 지운다.
 
 Airflow Variables:

@@ -16,8 +16,10 @@
               source, schema_version, measurement_version
   가짜 표시: served는 model_version="simulator", actions는 source="simulator".
 - 기사: feat.article_meta에서 그 시간 끝 전에 발행된 최신 기사 (embed_articles가 채운다).
-- 같은 시간은 언제 돌려도 같은 내용이 나온다(시간을 시드로 쓴다). 객체 이름도 고정이고
+- 시간을 시드로 써서 같은 시간·기사 목록·독자 수면 같은 내용이 나온다. 객체 이름도 고정이고
   덮어쓰지 않으므로(if_generation_match=0), 다시 돌리면 이미 있는 파일은 건너뛴다.
+- served만 쓰고 실패한 뒤 기사 목록이나 독자 수가 바뀌면 actions의 짝이 안 맞는다. 그때는
+  actions를 쓰지 않고 실패한다(write_hour).
 
 환경변수:
   GCP_PROJECT_ID     BigQuery·GCS 프로젝트
@@ -170,6 +172,8 @@ def visit(rng, reader, articles, start, end) -> tuple[list[dict], list[dict]]:
         interest = taste(reader, article["category"])
         if rng.random() < interest / (1 + 0.06 * (row["position"] - 1)):
             opened = now + timedelta(milliseconds=rng.randint(200, 900))
+            if opened >= stop_at:         # 열면 닫는 시각이 여는 시각보다 앞서게 된다
+                break
             actions.append(action(rng, opened, end, "article_open", row["impression_id"], "list"))
             dwell = int(rng.lognormvariate(math.log(15000 + 60000 * interest), 0.6))
             dwell = max(1500, min(dwell, 300000))
@@ -232,6 +236,17 @@ def write(bucket, name: str, rows: list[dict]) -> bool:
     return True
 
 
+def write_hour(bucket, names: dict[str, str], served: list[dict], actions: list[dict]) -> dict[str, bool]:
+    """served를 먼저 쓰고 actions를 쓴다. 이미 있는 served가 이번 것과 다르면 actions를 새로 쓰지 않는다."""
+    wrote = {"served": write(bucket, names["served"], served)}
+    if not wrote["served"] and actions and not bucket.blob(names["actions"]).exists():
+        old = gzip.decompress(bucket.blob(names["served"]).download_as_bytes(raw_download=True))
+        if old != gzip.decompress(to_gzip(served)):
+            raise RuntimeError(f"이미 있는 {names['served']}가 이번 served와 달라 actions를 쓰지 않는다")
+    wrote["actions"] = write(bucket, names["actions"], actions)
+    return wrote
+
+
 def fetch_articles(client, table: str, end: datetime) -> list[dict]:
     from google.cloud import bigquery as bq
 
@@ -264,9 +279,9 @@ def main() -> None:
                                     float(os.environ.get("SIM_VISIT_SCALE", "1.0")))
     bucket = storage.Client(project=project).bucket(os.environ["RAW_GCS_BUCKET"])
     names = object_names(os.environ.get("RAW_GCS_PREFIX", ""), start)
+    wrote = write_hour(bucket, names, served, actions)
     for stream, rows in (("served", served), ("actions", actions)):
-        wrote = write(bucket, names[stream], rows)
-        status = "씀" if wrote else ("없음" if not rows else "이미 있음")
+        status = "씀" if wrote[stream] else ("없음" if not rows else "이미 있음")
         print(f"{stream}: {len(rows)}줄 {status} gs://{bucket.name}/{names[stream]}")
 
 
