@@ -64,6 +64,7 @@ Airflow Variables (아래 표에서 `(필수)`가 붙은 값 중 하나라도 �
 
 | Variable | 값 |
 | --- | --- |
+| `feast_wait_for_sources` | 같은 시간의 `build_feast_sources`가 끝나길 기다릴지 (선택, 기본 `true`. 원천 표를 로컬 스크립트로 만드는 동안은 `false`) |
 | `feast_work_image` | 작업 이미지 태그 (필수, DAG가 템플릿으로 읽는다) |
 | `feast_registry_path` | `gs://.../feast/registry.pb` (필수, 읽기·쓰기) |
 | `valkey_host` | `valkey.valkey.svc.cluster.local` (필수) |

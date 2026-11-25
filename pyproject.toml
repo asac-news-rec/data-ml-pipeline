@@ -19,6 +19,14 @@ airflow-dag = [
   "pyarrow",
   "numpy",
 ]
+# 기사 임베딩 작업 이미지 (embed_articles). torch는 CPU 빌드만 받는다(아래 tool.uv.sources).
+embed = [
+  "sentence-transformers",
+  "torch",
+  "psycopg[binary]",
+  "google-cloud-bigquery",
+  "google-cloud-secret-manager",
+]
 # 학습 Job 이미지 (LightGBM, MLflow)
 train = [
   "feast[gcp,redis]==0.68.0",
@@ -32,3 +40,11 @@ train = [
 
 [tool.uv]
 package = false
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
