@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from .features import feature_names
 
@@ -26,6 +25,8 @@ class Model:
         self.version = "unknown"
 
     def load(self) -> None:
+        import lightgbm as lgb
+
         if self.uri:
             import mlflow
             import mlflow.lightgbm
@@ -35,13 +36,11 @@ class Model:
             if not tracking:
                 raise RuntimeError("MODEL_URI를 쓰려면 MLFLOW_TRACKING_URI가 필요하다")
             mlflow.set_tracking_uri(tracking)
-            self.model = mlflow.lightgbm.load_model(self.uri)
+            loaded = mlflow.lightgbm.load_model(self.uri)
+            # sklearn 방식으로 등록한 모델은 predict가 확률이 아니라 0/1이라 안의 Booster를 쓴다.
+            self.model = loaded if isinstance(loaded, lgb.Booster) else loaded.booster_
             self.version = self._mlflow_version(MlflowClient())
-            return
-
-        import lightgbm as lgb
-
-        if self.source.startswith("gs://"):
+        elif self.source.startswith("gs://"):
             # MLflow 서버가 뜨기 전의 임시 경로. 버전은 GCS 객체 generation이다(덮어쓰면 바뀐다).
             text, generation = read_gcs(self.source)
             self.model = lgb.Booster(model_str=text)
@@ -66,7 +65,4 @@ class Model:
         return self.uri
 
     def predict(self, matrix: np.ndarray) -> np.ndarray:
-        if self.uri:
-            frame = pd.DataFrame(matrix, columns=feature_names())
-            return self.model.predict(frame)
         return self.model.predict(matrix)

@@ -1,6 +1,6 @@
 # 추론 서버 `/v1/rank`
 
-뉴스 백엔드가 후보 기사를 보내면 Feast online store 피처로 PCTR을 계산해 순위를 돌려준다. 계약은 청사진 규약 ②(https://blueprint.yoonmo335.workers.dev/overview#c2)를 따른다.
+뉴스 백엔드가 후보 기사를 보내면 Feast online store 피처로 PCTR을 계산해 순위를 돌려준다. 요청·응답 계약은 `serving/openapi.json`이다.
 
 ## 실행
 

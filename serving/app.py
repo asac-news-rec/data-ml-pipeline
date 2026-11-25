@@ -1,20 +1,25 @@
 """추론 서버. 뉴스 백엔드의 POST /v1/rank 요청에 PCTR 점수와 순위를 돌려준다."""
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from feast import FeatureStore
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
+from . import examples
 from .features import ARTICLE_ID, fetch_online, missing_flags, to_matrix
 from .model import Model
 
 ROOT = Path(__file__).resolve().parents[1]
+logger = logging.getLogger("uvicorn.error")
+Reason = Literal["READER_FEATURES_NOT_FOUND", "ARTICLE_FEATURES_NOT_FOUND", "UNKNOWN_ARTICLE"]
 
 
 class Context(BaseModel):
@@ -33,14 +38,6 @@ class Context(BaseModel):
 
 
 class RankRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {
-        "request_id": "019a0000-0000-7000-8000-000000000001",
-        "reader_id": "019a0000-0000-7000-8000-000000000002",
-        "candidates": ["news-" + "0" * 31 + "1", "news-" + "0" * 31 + "2"],
-        "context": {"request_time": "2026-11-25T10:00:00+09:00", "device": "mobile"},
-        "top_k": 2,
-    }})
-
     request_id: str = Field(description=(
         "이번 피드 응답 번호. WAS가 만든 값을 그대로 돌려준다(로그 대조용). 반환 기록의 request_id와 같은 값을 넣는다."))
     reader_id: str = Field(description="익명 독자 ID(쿠키에서 검증한 reader_id). 독자 피처를 찾는 열쇠다.")
@@ -48,20 +45,27 @@ class RankRequest(BaseModel):
         "점수를 매길 article_id 목록(news_articles.id, news- 뒤 16진수 32자). 1~200개, 권장 20~30개. "
         "현재 화면에 보여 줄 순서(최신순)대로 넣는다. 이 순서가 모델의 position(1부터) 피처가 된다. 중복 없이 넣는다."))
     context: Context = Field(description="요청 시점의 정보")
-    top_k: int | None = Field(default=None, description=(
+    top_k: int | None = Field(default=None, ge=1, description=(
         "점수 상위 몇 개를 돌려받을지. 1 이상, candidates 개수 이하. 생략하거나 null이면 점수를 낸 후보를 모두 돌려준다. "
-        "순서만 바꾸려면 생략한다."))
+        "순서만 바꾸려면 생략한다. 잘린 후보는 ranked·defaulted·unscored 어디에도 없다."))
+
+    @field_validator("candidates")
+    @classmethod
+    def no_duplicates(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("candidates에 중복이 있다")
+        return value
 
 
 class RankedItem(BaseModel):
     article_id: str = Field(description="요청한 candidates 중 하나")
-    pctr: float = Field(description="이 독자가 이 기사를 열 확률 예측값(0~1). 반환 기록의 score에 넣는다.")
-    rank: int = Field(description="추천 순위. 1부터, pctr이 높은 순서")
+    pctr: float = Field(ge=0, le=1, description="이 독자가 이 기사를 열 확률 예측값(0~1). 반환 기록의 score에 넣는다.")
+    rank: int = Field(ge=1, description="추천 순위. 1부터, pctr이 높은 순서")
 
 
 class ReasonItem(BaseModel):
     article_id: str = Field(description="요청한 candidates 중 하나")
-    reason: str = Field(description=(
+    reason: Reason = Field(description=(
         "READER_FEATURES_NOT_FOUND(독자 피처 없음), ARTICLE_FEATURES_NOT_FOUND(기사 임베딩 없음), "
         "UNKNOWN_ARTICLE(article_id 형식이 틀림)"))
 
@@ -72,7 +76,7 @@ class BadRequest(BaseModel):
 
 
 class Unavailable(BaseModel):
-    detail: str = Field(description="준비되지 않은 이유. 화면에 보여 주지 말고 로그에만 남긴다.")
+    detail: Literal["not ready", "inference failed"] = Field(description="고정 문구. 자세한 원인은 추론 서버 로그에만 남는다.")
 
 
 class RankResponse(BaseModel):
@@ -96,7 +100,6 @@ def load_store() -> FeatureStore:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.ready = False
-    app.state.error = None
     app.state.store = None
     app.state.model = None
     try:
@@ -105,19 +108,41 @@ async def lifespan(app: FastAPI):
         model.load()
         app.state.model = model
         app.state.ready = True
-    except Exception as exc:  # readyz와 rank가 503으로 알린다
-        app.state.error = str(exc)
+    except Exception:  # readyz와 rank가 503으로 알린다. 원인은 로그에만 남긴다.
+        logger.exception("추론 서버 준비 실패")
     yield
 
 
-app = FastAPI(title="news-rec inference", version="1.0.0", lifespan=lifespan)
-UNAVAILABLE = {503: {"model": Unavailable, "description": "모델·피처 저장소를 쓸 수 없음"}}
+DESCRIPTION = """뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.
+
+| API | 누가 부르나 | 언제 |
+|---|---|---|
+| `POST /v1/rank` | 뉴스 WAS | 피드 요청마다 한 번 |
+| `GET /healthz` | 쿠버네티스 liveness | 주기적으로 |
+| `GET /readyz` | 쿠버네티스 readiness | 주기적으로 |
+| `GET /v1/model` | 사람 | 올라간 모델을 확인할 때 |
+
+WAS는 `POST /v1/rank`만 부른다.
+
+- 순서: 최신순 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로 + `unscored`를 뒤에 붙여 응답 → 반환 기록 저장
+- 반환 기록: `ranked[].pctr` → `score`, `model_version` → `model_version`. `features_as_of`는 임시값이라 NULL로 둔다.
+- 실패(400·503·시간 초과·연결 실패): 최신순 그대로 응답하고 `score`는 NULL, `model_version`은 `fallback`
+- 인증 없음. 클러스터 내부에서만 부른다.
+"""
+app = FastAPI(title="news-rec inference", version="1.0.0", description=DESCRIPTION, lifespan=lifespan)
+
+
+def documented(model, description: str, values: dict) -> dict:
+    return {"model": model, "description": description, "content": {"application/json": {"examples": values}}}
+
+
+UNAVAILABLE = {503: documented(Unavailable, "모델·피처 저장소를 쓸 수 없음", examples.UNAVAILABLE)}
 
 
 def openapi() -> dict:
     """검증 오류를 400으로 돌려주므로 FastAPI가 자동으로 넣는 422를 명세에서 뺀다."""
     if not app.openapi_schema:
-        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
         for path in schema["paths"].values():
             for operation in path.values():
                 operation["responses"].pop("422", None)
@@ -150,7 +175,7 @@ def readyz() -> dict:
     Valkey 접속은 확인하지 않는다. Valkey 장애는 /v1/rank의 503으로 드러난다.
     """
     if not app.state.ready:
-        raise HTTPException(503, detail=app.state.error or "not ready")
+        raise HTTPException(503, detail="not ready")
     return {"status": "ready", "model_version": app.state.model.version}
 
 
@@ -158,14 +183,16 @@ def readyz() -> dict:
 def model_version() -> dict:
     """지금 올라간 모델 버전. 사람이 확인할 때 쓰고 WAS는 부르지 않는다(/v1/rank 응답에 들어 있다)."""
     if not app.state.ready:
-        raise HTTPException(503, detail=app.state.error or "not ready")
+        raise HTTPException(503, detail="not ready")
     return {"model_version": app.state.model.version}
 
 
 @app.post("/v1/rank", response_model=RankResponse, summary="후보 기사 순위 매기기", responses={
-    400: {"model": BadRequest, "description": "필드가 없거나 형식이 틀림"}, **UNAVAILABLE,
+    200: documented(RankResponse, "추천 순서. 신규 독자도 200이다.", examples.RESPONSES),
+    400: documented(BadRequest, "필드가 없거나 형식이 틀림", examples.BAD_REQUESTS),
+    **UNAVAILABLE,
 })
-def rank(request: RankRequest) -> RankResponse:
+def rank(request: RankRequest = Body(openapi_examples=examples.REQUESTS)) -> RankResponse:
     """독자 1명과 후보 기사를 받아 기사를 열 확률(pctr)이 높은 순서로 돌려준다.
 
     - 누가·언제: 뉴스 WAS가 피드 요청마다 후보(최신순 한 페이지)를 조회한 뒤 한 번 부른다. 기사마다 따로 부르지 않는다.
@@ -174,11 +201,12 @@ def rank(request: RankRequest) -> RankResponse:
     - 503·시간 초과·연결 실패: 최신순으로 응답한다. 반환 기록은 score=NULL, model_version="fallback".
     """
     if not app.state.ready:
-        raise HTTPException(503, detail=app.state.error or "not ready")
+        raise HTTPException(503, detail="not ready")
 
     top_k = len(request.candidates) if request.top_k is None else request.top_k
-    if top_k < 1 or top_k > len(request.candidates):
-        return JSONResponse(status_code=400, content={"error": "invalid top_k", "field": "top_k"})
+    if top_k > len(request.candidates):
+        return JSONResponse(status_code=400, content={
+            "error": "top_k는 1 이상, candidates 개수 이하여야 한다", "field": "body.top_k"})
 
     known = [(article_id, position)
              for position, article_id in enumerate(request.candidates, start=1)
@@ -203,7 +231,8 @@ def rank(request: RankRequest) -> RankResponse:
         matrix = to_matrix(online)
         pctrs = app.state.model.predict(matrix)
     except Exception as exc:
-        raise HTTPException(503, detail=f"inference failed: {exc}") from exc
+        logger.exception("추론 실패 request_id=%s", request.request_id)
+        raise HTTPException(503, detail="inference failed") from exc
 
     reader_missing, article_missing = missing_flags(online)
     scored = sorted(
