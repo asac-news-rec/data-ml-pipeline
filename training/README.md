@@ -48,5 +48,7 @@ MLflow 서버는 클러스터 안에서만 접근된다. 로컬에서는 `MLFLOW
 | 98 | 새 모델이 더 낫지 않다 | skipped |
 | 99 | 클릭이 부족하다 | skipped |
 
-재시작에는 Airflow worker 계정의 `inference` 네임스페이스 deployment `get`·`patch` 권한이 필요하다.
+가상 독자 로그(`model_version='simulator'`)는 기본으로 뺀다. `train_include_simulator=true`일 때만 넣고, 넣은 행 수를 MLflow `simulated_rows`에 남긴다.
+
+재시작 task는 Airflow 스케줄러 안에서 돈다(LocalExecutor). 스케줄러 계정의 `inference` 네임스페이스 deployment `get`·`patch` 권한이 필요하다.
 추론 서버는 `MODEL_URI=models:/pctr@champion`으로 떠 있어야 한다.

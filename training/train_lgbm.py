@@ -227,7 +227,8 @@ def main() -> None:
     print(f"저장: {args.model_out}")
     params |= {"calib_a": a, "calib_b": b, "best_iteration": model.best_iteration,
                "negative_ratio": 1, "fit_rows": len(chosen), "calib_rows": counts["calib"][0],
-               "valid_rows": counts["valid"][0]}
+               "valid_rows": counts["valid"][0],
+               "simulated_rows": int(df["simulated"].sum()) if "simulated" in df else -1}
     if not log_mlflow(final, params, metrics, x[valid], y[valid], args.champion_max_age_days):
         sys.exit(NOT_PROMOTED)
 

@@ -10,6 +10,7 @@ impression(clean.served) 1건 = 1행. label은 그 impression에 article_open이
   TRAIN_VALID_HOURS     마지막 몇 시간을 valid로 둘지 (기본 24)
   TRAIN_LABEL_WAIT_HOURS  클릭이 도착할 때까지 기다리는 시간. 이보다 최근 impression은 뺀다 (기본 3)
   CLEAN_BQ_DATASET      기본 clean
+  TRAIN_INCLUDE_SIMULATOR  가상 독자(model_version='simulator') 로그를 넣을지. 기본 false = 뺀다
   TRAINING_SET          출력 parquet (기본 features/feast/data/training_set.parquet)
   FEAST_FS_YAML, FEAST_REGISTRY_PATH, FEAST_BQ_TEMP_DATASET, VALKEY_HOST  Feast 설정
 """
@@ -26,7 +27,8 @@ NOT_ENOUGH_CLICKS = 99   # training/train_lgbm.py, dags/train_pctr.py와 같다
 
 QUERY = """
 SELECT s.impression_id, s.reader_id, s.article_id, s.served_at AS event_timestamp, s.position,
-       IF(o.impression_id IS NULL, 0, 1) AS label
+       IF(o.impression_id IS NULL, 0, 1) AS label,
+       COALESCE(s.model_version, '') = 'simulator' AS simulated
 FROM `{clean}.served` AS s
 LEFT JOIN (
   SELECT DISTINCT impression_id FROM `{clean}.actions`
@@ -35,6 +37,7 @@ LEFT JOIN (
 ) AS o USING (impression_id)
 WHERE s.served_date BETWEEN @first_date AND @last_date
   AND s.served_at >= @start AND s.served_at < @stop
+  AND (@include_simulator OR COALESCE(s.model_version, '') != 'simulator')
 ORDER BY s.served_at, s.reader_id, s.position, s.impression_id
 """
 
@@ -78,13 +81,16 @@ def main() -> None:
     project = os.environ["GCP_PROJECT_ID"]
     w = window(datetime.fromisoformat(os.environ["TRAIN_END"]), int(os.environ.get("TRAIN_DAYS", "14")),
                int(os.environ.get("TRAIN_VALID_HOURS", "24")), int(os.environ.get("TRAIN_LABEL_WAIT_HOURS", "3")))
+    include = os.environ.get("TRAIN_INCLUDE_SIMULATOR", "false").strip().lower() == "true"
     query = QUERY.format(clean=f"{project}.{os.environ.get('CLEAN_BQ_DATASET', 'clean')}")
     types = {"start": "TIMESTAMP", "stop": "TIMESTAMP", "action_end": "TIMESTAMP",
              "first_date": "DATE", "last_date": "DATE", "action_last_date": "DATE"}
     config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter(k, t, w[k]) for k, t in types.items()])
+        query_parameters=[bigquery.ScalarQueryParameter(k, t, w[k]) for k, t in types.items()]
+        + [bigquery.ScalarQueryParameter("include_simulator", "BOOL", include)])
     rows = bigquery.Client(project=project).query(query, job_config=config).to_dataframe()
     entity = entity_frame(rows, w["valid_from"])
+    print(f"가상 독자 포함={include}, 가상 독자 {int(entity['simulated'].sum()):,}행")
     print(f"impression {len(entity):,}행, 클릭 {int(entity['label'].sum()):,}, "
           f"{w['start']:%m-%d %H:%M} ~ {w['stop']:%m-%d %H:%M} UTC, split {entity['split'].value_counts().to_dict()}")
     if entity.empty or set(entity["split"]) != {"train", "valid"} or not entity["label"].sum():

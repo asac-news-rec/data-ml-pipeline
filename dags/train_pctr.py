@@ -7,7 +7,7 @@ train_pctr Pod 하나가 training set을 만들고 바로 학습한다(파일을
 
 Airflow Variables:
   train_work_image, gcp_project_id, feast_registry_path, feast_bq_temp_dataset, mlflow_tracking_uri (필수)
-  train_days(기본 14), clean_bq_dataset(기본 clean), valkey_host, inference_namespace(기본 inference),
+  train_include_simulator(기본 false. 가상 독자 로그로도 학습할 때만 true), train_days(기본 14), clean_bq_dataset(기본 clean), valkey_host, inference_namespace(기본 inference),
   inference_deployment(기본 inference-server)
 """
 import os
@@ -86,6 +86,10 @@ with DAG(
                    "python /app/training/train_lgbm.py --training-set /tmp/training_set.parquet "
                    "--model-out /tmp/lgbm.txt"],
         skip_on_exit_code=[98, 99],
+        # worker 풀(Spot)에서만 띄운다. 고정 노드에는 Airflow·Valkey·MLflow가 있다.
+        node_selector={"pool": "worker"},
+        tolerations=[k8s.V1Toleration(key="workload", operator="Equal", value="worker", effect="NoSchedule")],
+        retries=2,   # Spot 노드는 중간에 회수될 수 있다
         namespace=NAMESPACE,
         service_account_name=SERVICE_ACCOUNT,
         image_pull_policy="IfNotPresent",
@@ -99,6 +103,7 @@ with DAG(
             "TRAIN_END": "{{ data_interval_end.isoformat() }}",
             "TRAIN_DAYS": "{{ var.value.get('train_days', '14') }}",
             "TRAINING_SET": "/tmp/training_set.parquet",
+            "TRAIN_INCLUDE_SIMULATOR": "{{ var.value.get('train_include_simulator', 'false') }}",
             "CLEAN_BQ_DATASET": "{{ var.value.get('clean_bq_dataset', 'clean') }}",
             "FEAST_FS_YAML": "feature_store.gcp.yaml",
             "FEAST_REGISTRY_PATH": "{{ var.value.feast_registry_path }}",

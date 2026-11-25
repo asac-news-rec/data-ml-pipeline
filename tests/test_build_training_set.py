@@ -23,7 +23,8 @@ class Window(unittest.TestCase):
             B.window(datetime(2026, 11, 25, tzinfo=timezone.utc), 1, 24, 3)
 
     def test_query_is_bounded(self):
-        for text in ("served_date BETWEEN", "event_date BETWEEN", "event_time < @action_end"):
+        for text in ("served_date BETWEEN", "event_date BETWEEN", "event_time < @action_end",
+                     "@include_simulator OR COALESCE(s.model_version, '') != 'simulator'"):
             self.assertIn(text, B.QUERY)
         self.assertNotIn("SELECT *", B.QUERY)
 
