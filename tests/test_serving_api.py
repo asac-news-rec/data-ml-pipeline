@@ -63,6 +63,22 @@ class RankApi(unittest.TestCase):
         self.assertEqual({i.article_id: i.reason for i in out.defaulted}[IDS[2]], "ARTICLE_FEATURES_NOT_FOUND")
         self.assertEqual([i.reason for i in out.unscored], ["UNKNOWN_ARTICLE"])
 
+    def test_bad_scores_are_fixed_503(self):
+        bad = ([0.1, float("nan"), 0.2], [0.1, float("inf"), 0.2], [0.1, 1.2, 0.2], [-0.1, 0.1, 0.2],
+               [0.1, 0.2], [0.1, 0.2, 0.3, 0.4], [[0.1], [0.2], [0.3]], None)
+        for scores in bad:
+            A.app.state.model.predict.return_value = scores if scores is None else np.array(scores)
+            with self.subTest(scores=scores), patch.object(A, "fetch_online"), patch.object(A, "to_matrix"), \
+                    self.assertLogs("uvicorn.error", "ERROR"), self.assertRaises(HTTPException) as caught:
+                A.rank(request())
+            self.assertEqual((caught.exception.status_code, caught.exception.detail), (503, "inference failed"))
+
+    def test_boundary_scores_are_allowed(self):
+        online = pd.DataFrame({"u_emb": [None] * 3, "a_emb": [None] * 3})
+        A.app.state.model.predict.return_value = np.array([0.0, 1.0, 0.5])
+        with patch.object(A, "fetch_online", return_value=online), patch.object(A, "to_matrix"):
+            self.assertEqual([i.pctr for i in A.rank(request()).ranked], [1.0, 0.5, 0.0])
+
     def test_openapi_examples_match_schema(self):
         for item in examples.REQUESTS.values():
             A.RankRequest(**item["value"])

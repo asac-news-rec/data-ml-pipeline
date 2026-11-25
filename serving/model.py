@@ -66,3 +66,14 @@ class Model:
 
     def predict(self, matrix: np.ndarray) -> np.ndarray:
         return self.model.predict(matrix)
+
+
+def check_scores(scores, count: int) -> np.ndarray:
+    """예측이 후보마다 하나씩 있고 모두 0~1인지 본다. 아니면 ValueError(/v1/rank는 503으로 바꾼다)."""
+    scores = np.asarray(scores, dtype=float)
+    if scores.shape != (count,):
+        raise ValueError(f"예측 모양이 {scores.shape}이다. 후보는 {count}개다")
+    # NaN은 비교가 항상 거짓이라 여기서 같이 걸린다.
+    if not ((scores >= 0) & (scores <= 1)).all():
+        raise ValueError("예측에 NaN이거나 0~1 밖인 값이 있다")
+    return scores

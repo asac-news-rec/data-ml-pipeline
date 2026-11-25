@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import examples
 from .features import ARTICLE_ID, fetch_online, missing_flags, to_matrix
-from .model import Model
+from .model import Model, check_scores
 
 ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger("uvicorn.error")
@@ -234,7 +234,7 @@ def rank(request: RankRequest = Body(openapi_examples=examples.REQUESTS)) -> Ran
             [position for _, position in known],
         )
         matrix = to_matrix(online)
-        pctrs = app.state.model.predict(matrix)
+        pctrs = check_scores(app.state.model.predict(matrix), len(known))
     except Exception as exc:
         logger.exception("추론 실패 request_id=%s", request.request_id)
         raise HTTPException(503, detail="inference failed") from exc
