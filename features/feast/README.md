@@ -7,7 +7,7 @@ PCTR LightGBM 모델의 피처(일반 9 + 유저 임베딩 768 + 기사 임베�
 training set과 추론 서버가 **같은 정의**에서 피처를 꺼내게 하는 것이 목적이다.
 
 ```
-source table(parquet / BigQuery dev_yoonmo.* / [계획] feat.*)
+source table(parquet / BigQuery feat.*(운영), dev_yoonmo.*(개인 시험))
    ├─ get_historical_features(entity_df=impression 목록(기본)) → training set (point-in-time join)
    └─ materialize → 온라인 저장소(SQLite / [계획] Valkey)
                        └─ get_online_features(reader 1명 + 후보 기사 N건) → 추론 서버
@@ -69,7 +69,7 @@ Airflow Variables (아래 표에서 `(필수)`가 붙은 값 중 하나라도 �
 | `feast_registry_path` | `gs://.../feast/registry.pb` (필수, 읽기·쓰기) |
 | `valkey_host` | `valkey.valkey.svc.cluster.local` (필수) |
 | `gcp_project_id` | `final-project-513508` (필수) |
-| `feast_bq_dataset` | `final-project-513508.dev_yoonmo` (필수, source table 위치) |
+| `feast_bq_dataset` | `final-project-513508.feat` (필수, source table 위치) |
 | `feast_bq_temp_dataset` | `dev_yoonmo` 또는 `final-project-513508.dev_yoonmo` (필수, entity_df 임시 표). 프로젝트를 쓰면 `gcp_project_id`와 같아야 한다. GitHub Variables의 `FEAST_BQ_TEMP_DATASET`에는 데이터셋 이름만 넣는다 |
 | `feast_full_materialize` | `true`면 전체 적재. 첫 적재와 Valkey가 비었을 때만 |
 | `feast_materialize_start` | 전체 적재 시작 시각 `2026-11-03T00:00:00+09:00` |
@@ -90,7 +90,7 @@ DAG가 Variable을 환경변수로 그대로 넘기고, `materialize.py`도 기�
 
 Valkey는 디스크가 없다. 노드를 끄면 값이 비므로, 노드를 다시 켠 뒤에도 같은 방법으로 전체 적재를 한 번 돌린다. 노드가 꺼져 있는 동안 매시 DAG는 실패한다.
 
-지금은 `dev_yoonmo`를 쓴다. `dev_feast` 이름 변경은 MVP 이후.
+원천 표는 `feat`, entity_df 임시 표는 `dev_yoonmo`를 쓴다. `dev_feast` 이름 변경은 MVP 이후.
 
 #### registry는 CI와 DAG가 같이 쓴다
 
