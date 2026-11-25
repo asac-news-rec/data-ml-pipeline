@@ -25,6 +25,7 @@ from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperato
 from airflow.providers.standard.operators.python import BranchPythonOperator, PythonOperator
 from airflow.providers.standard.sensors.external_task import ExternalTaskSensor
 from airflow.sdk import DAG
+from airflow.timetables.interval import CronDataIntervalTimetable
 from kubernetes.client import models as k8s
 
 NAMESPACE = os.environ.get("FEAST_WORK_NAMESPACE", "airflow")
@@ -58,7 +59,8 @@ def check_config(**context) -> None:
 with DAG(
     dag_id="feast_materialize",
     start_date=datetime(2026, 11, 1),
-    schedule=timedelta(hours=1),
+    # Airflow 3의 timedelta는 켠 시각부터 세서 DAG마다 logical_date가 어긋난다. 정시 한 시간 구간으로 고정한다.
+    schedule=CronDataIntervalTimetable("0 * * * *", timezone="UTC"),
     catchup=False,
     max_active_runs=1,
     default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
