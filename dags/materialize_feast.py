@@ -6,6 +6,9 @@ Feast는 Airflow 이미지에 없으므로 Python 3.12 작업 이미지를 Kuber
 materialize는 Valkey뿐 아니라 registry에도 적재 구간을 쓴다. 그래서 Airflow 서비스 계정에는
 registry 읽기·쓰기 권한이 필요하고, main `feast apply`와 겹치지 않게 apply 전에 DAG를 pause한다.
 
+materialize가 끝나면 `export_candidates`가 추천 후보 목록(최근 7일 기사, 최신순)을 registry 옆
+`candidates.json`에 쓴다. 추천 서버 `/v1/recommend`가 이 파일을 읽는다.
+
 같은 시간의 `build_feast_sources`(Feast 원천 표 생성)가 끝난 뒤에 적재한다. 두 DAG는 start_date·schedule이
 같아서 logical date가 맞물린다. 원천 표를 아직 로컬 스크립트로 만드는 동안에는 Variable
 `feast_wait_for_sources=false`로 기다리지 않게 한다.
@@ -120,5 +123,26 @@ with DAG(
         on_finish_action="delete_pod",
     )
 
+    # registry와 같은 폴더에 쓴다. 추천 서버 계정은 이 폴더 읽기 권한이 이미 있다.
+    export = KubernetesPodOperator(
+        task_id="export_candidates",
+        name="export-candidates",
+        image="{{ var.value.feast_work_image }}",
+        cmds=["python", "/app/transform/export_candidates.py"],
+        namespace=NAMESPACE,
+        service_account_name=SERVICE_ACCOUNT,
+        image_pull_policy="IfNotPresent",
+        container_resources=k8s.V1ResourceRequirements(
+            requests={"cpu": "100m", "memory": "256Mi"},
+            limits={"cpu": "500m", "memory": "512Mi"},
+        ),
+        env_vars={
+            "GCP_PROJECT_ID": "{{ var.value.gcp_project_id }}",
+            "CANDIDATES_PATH": "{{ var.value.feast_registry_path | replace('registry.pb', 'candidates.json') }}",
+        },
+        get_logs=True,
+        on_finish_action="delete_pod",
+    )
+
     decide >> [wait_sources, check]
-    wait_sources >> check >> materialize
+    wait_sources >> check >> materialize >> export

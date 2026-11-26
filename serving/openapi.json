@@ -2,197 +2,58 @@
   "openapi": "3.1.0",
   "info": {
     "title": "news-rec inference",
-    "description": "뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.\n\n\n| API | 누가 부르나 | 언제 |\n|---|---|---|\n| `POST /v1/rank` | 뉴스 WAS | 피드 요청마다 한 번 |\n| `GET /healthz` | 쿠버네티스 liveness | 주기적으로 |\n| `GET /readyz` | 쿠버네티스 readiness | 주기적으로 |\n| `GET /v1/model` | 사람 | 올라간 모델을 확인할 때 |\n\nWAS는 `POST /v1/rank`만 부른다.\n\n- 순서: 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로, `unscored`는 뒤에 붙여 응답 → 반환 기록 저장\n- 반환 기록: `ranked[].pctr` → `score`, `model_version` → `model_version`. `features_as_of`는 임시값이라 NULL로 둔다.\n- 실패(400·503·시간 초과·연결 실패): WAS가 추천 없이 응답한다. 이때 어떤 순서로 보여 줄지와 타임아웃은 WAS가 정한다.\n  반환 기록은 `score` NULL, `model_version` `fallback`을 제안한다.\n- 응답 시간 목표: P99 200ms(아직 Valkey에서 재지 않음)\n- 아직 안 되는 것: `features_as_of`는 `request_time`을 그대로 돌려준다. `UNKNOWN_ARTICLE`은 ID 형식만 보고, 형식이 맞지만 없는 기사는\n  `ARTICLE_FEATURES_NOT_FOUND`로 점수를 낸다.\n- 인증 없음. 클러스터 내부에서만 부른다.\n",
+    "description": "뉴스 WAS가 추천순 피드를 만들 때 부르는 API. WAS는 `POST /v1/recommend` 하나만 부른다.\n\n- 첫 조회: 프런트가 추천순·분류 조건으로 피드를 요청 → WAS가 `reader_id`·`category`·`subcategory`·`size`(20)로 호출\n  → 받은 `items` 순서대로 기사 정보를 DB에서 가져와 응답을 만들고 반환 기록을 저장 → `next_cursor`를 프런트에 전달\n- 다음 조회: 프런트가 받은 커서로 요청 → WAS가 같은 `reader_id`·`category`·`subcategory`와 `cursor`로 호출\n- 분류 조건을 바꾸거나 새로고침하면 `cursor` 없이 첫 조회부터 다시 부른다.\n- 후보 선정(지금은 해당 분류의 최신 기사 200개), 점수 계산, 정렬, 페이지 나누기, 페이지 간 중복·누락 방지는 추천 서버가 한다.\n- 정렬 결과는 30분 동안 유지된다. 30분이 지난 커서는 400(`field`: `body.cursor`)이고, 첫 조회부터 다시 부른다.\n- 실패하면 503이다. 다른 정렬로 대체할지는 WAS가 정한다.\n- 인증 없음. VPC 내부 주소로만 부른다. 응답 시간 목표 P99 200ms.\n",
     "version": "1.0.0"
   },
   "paths": {
-    "/healthz": {
-      "get": {
-        "summary": "프로세스 생존 확인(쿠버네티스용)",
-        "description": "프로세스가 살아 있으면 200. 모델·Valkey 상태는 보지 않는다. 쿠버네티스 liveness가 부르고 WAS는 부르지 않는다.",
-        "operationId": "healthz_healthz_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Healthz Healthz Get"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/readyz": {
-      "get": {
-        "summary": "요청을 받을 준비 확인(쿠버네티스용)",
-        "description": "시작할 때 모델과 Feast 정의를 읽었으면 200, 못 읽었으면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.\n\nValkey 접속은 확인하지 않는다. Valkey 장애는 /v1/rank의 503으로 드러난다.",
-        "operationId": "readyz_readyz_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Readyz Readyz Get"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "모델·피처 저장소를 쓸 수 없음",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Unavailable"
-                },
-                "examples": {
-                  "not_ready": {
-                    "summary": "모델이나 Feast 정의를 못 읽음",
-                    "value": {
-                      "detail": "not ready"
-                    }
-                  },
-                  "failed": {
-                    "summary": "피처 조회나 예측 실패",
-                    "value": {
-                      "detail": "inference failed"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/model": {
-      "get": {
-        "summary": "올라간 모델 버전(운영 확인용)",
-        "description": "지금 올라간 모델 버전. 사람이 확인할 때 쓰고 WAS는 부르지 않는다(/v1/rank 응답에 들어 있다).",
-        "operationId": "model_version_v1_model_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Model Version V1 Model Get"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "모델·피처 저장소를 쓸 수 없음",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Unavailable"
-                },
-                "examples": {
-                  "not_ready": {
-                    "summary": "모델이나 Feast 정의를 못 읽음",
-                    "value": {
-                      "detail": "not ready"
-                    }
-                  },
-                  "failed": {
-                    "summary": "피처 조회나 예측 실패",
-                    "value": {
-                      "detail": "inference failed"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/rank": {
+    "/v1/recommend": {
       "post": {
-        "summary": "후보 기사 순위 매기기",
-        "description": "독자 1명과 후보 기사를 받아 기사를 열 확률(pctr)이 높은 순서로 돌려준다.\n\n- 누가·언제: 뉴스 WAS가 피드 요청마다 후보를 조회한 뒤 한 번 부른다. 기사마다 따로 부르지 않는다.\n- 200: ranked 순서대로 보여 주고 unscored를 뒤에 붙인다. 신규 독자도 200이다.\n- 400: 요청이 틀렸다(코드 버그). 추천 없이 응답하고 오류 로그를 남긴다.\n- 503·시간 초과·연결 실패: 추천 없이 응답한다. 반환 기록은 score=NULL, model_version=\"fallback\"을 제안한다.",
-        "operationId": "rank_v1_rank_post",
+        "summary": "추천 피드 한 페이지",
+        "description": "독자 1명의 추천 피드를 size개씩 돌려준다. 자세한 흐름은 맨 위 설명을 본다.",
+        "operationId": "recommend_v1_recommend_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RankRequest"
+                "$ref": "#/components/schemas/RecommendRequest"
               },
               "examples": {
-                "basic": {
-                  "summary": "기본: 피처가 다 있는 독자와 기사",
+                "first": {
+                  "summary": "첫 조회: 사회 분류, 3개(실제는 기본 20)",
                   "value": {
-                    "request_id": "019a4c00-0000-7000-8000-000000000001",
-                    "reader_id": "01a111ba-8980-7b67-997d-ae94d226a8b3",
-                    "candidates": [
-                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                      "news-f9e5ad4cee1a465d95058050b2b6f234",
-                      "news-b5821dcb81e9466f920c6588a50523d7"
-                    ],
-                    "context": {
-                      "request_time": "2026-11-25T10:00:00+09:00",
-                      "device": "mobile"
-                    }
+                    "reader_id": "01a154ad-3580-7e37-9e7a-ee2e214bd473",
+                    "category": "사회",
+                    "size": 3
+                  }
+                },
+                "next": {
+                  "summary": "다음 조회: 직전 응답의 next_cursor를 그대로",
+                  "value": {
+                    "reader_id": "01a154ad-3580-7e37-9e7a-ee2e214bd473",
+                    "category": "사회",
+                    "size": 3,
+                    "cursor": "eyJsIjoiUGxyVEhLdE1aVm1YdF9WTiIsIm8iOjN9"
+                  }
+                },
+                "all": {
+                  "summary": "전체 분류(category 생략), 기본 20개",
+                  "value": {
+                    "reader_id": "01a154ad-3580-7e37-9e7a-ee2e214bd473"
+                  }
+                },
+                "subcategory": {
+                  "summary": "대분류+소분류",
+                  "value": {
+                    "reader_id": "01a154ad-3580-7e37-9e7a-ee2e214bd473",
+                    "category": "정치",
+                    "subcategory": "북한"
                   }
                 },
                 "new_reader": {
-                  "summary": "신규 독자: 독자 피처가 없어도 200, defaulted로 알림",
+                  "summary": "처음 보는 독자도 200",
                   "value": {
-                    "request_id": "019a4c00-0000-7000-8000-000000000001",
                     "reader_id": "019a4c00-0000-7000-8000-000000000099",
-                    "candidates": [
-                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                      "news-f9e5ad4cee1a465d95058050b2b6f234",
-                      "news-b5821dcb81e9466f920c6588a50523d7"
-                    ],
-                    "context": {
-                      "request_time": "2026-11-25T10:00:00+09:00",
-                      "device": "mobile"
-                    }
-                  }
-                },
-                "new_or_wrong_article": {
-                  "summary": "임베딩 없는 새 기사(defaulted)와 형식이 틀린 ID(unscored)",
-                  "value": {
-                    "request_id": "019a4c00-0000-7000-8000-000000000001",
-                    "reader_id": "01a111ba-8980-7b67-997d-ae94d226a8b3",
-                    "candidates": [
-                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                      "news-f9e5ad4cee1a465d95058050b2b6f234",
-                      "news-00000000000000000000000000000000",
-                      "wrong-id"
-                    ],
-                    "context": {
-                      "request_time": "2026-11-25T10:00:00+09:00",
-                      "device": "mobile"
-                    }
-                  }
-                },
-                "top_k": {
-                  "summary": "top_k로 상위 2개만 받기",
-                  "value": {
-                    "request_id": "019a4c00-0000-7000-8000-000000000001",
-                    "reader_id": "01a111ba-8980-7b67-997d-ae94d226a8b3",
-                    "candidates": [
-                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                      "news-f9e5ad4cee1a465d95058050b2b6f234",
-                      "news-b5821dcb81e9466f920c6588a50523d7"
-                    ],
-                    "context": {
-                      "request_time": "2026-11-25T10:00:00+09:00",
-                      "device": "mobile"
-                    },
-                    "top_k": 2
+                    "size": 2
                   }
                 }
               }
@@ -202,137 +63,108 @@
         },
         "responses": {
           "200": {
-            "description": "추천 순서. 신규 독자도 200이다.",
+            "description": "추천 순서의 기사 ID·점수. 신규 독자도 200이다.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RankResponse"
+                  "$ref": "#/components/schemas/RecommendResponse"
                 },
                 "examples": {
-                  "basic": {
-                    "summary": "기본: 피처가 다 있는 독자와 기사",
+                  "first": {
+                    "summary": "첫 조회 응답: position 1부터",
                     "value": {
-                      "request_id": "019a4c00-0000-7000-8000-000000000001",
-                      "model_version": "lgbm@gcs-1795600000000000",
-                      "features_as_of": "2026-11-25T10:00:00+09:00",
-                      "ranked": [
+                      "model_version": "pctr@3",
+                      "items": [
                         {
-                          "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
-                          "pctr": 0.10879145586504865,
-                          "rank": 1
+                          "article_id": "news-584ea4aaf41d4b848bf61c9e1cfb2b0a",
+                          "score": 0.06275767727596766,
+                          "position": 1
+                        },
+                        {
+                          "article_id": "news-6837d3bd5a2447fca3f1465648f1891a",
+                          "score": 0.05110099389544749,
+                          "position": 2
+                        },
+                        {
+                          "article_id": "news-3b42e7dcc0cc4708abf9f8e50e6b350a",
+                          "score": 0.045870898230499196,
+                          "position": 3
+                        }
+                      ],
+                      "next_cursor": "eyJsIjoiUGxyVEhLdE1aVm1YdF9WTiIsIm8iOjN9"
+                    }
+                  },
+                  "next": {
+                    "summary": "다음 조회 응답: position이 이어진다",
+                    "value": {
+                      "model_version": "pctr@3",
+                      "items": [
+                        {
+                          "article_id": "news-6114c3bd99ff40adb23206c824309cd2",
+                          "score": 0.04034340105128488,
+                          "position": 4
                         },
                         {
                           "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                          "pctr": 0.07937376559831806,
-                          "rank": 2
+                          "score": 0.036329614772921785,
+                          "position": 5
                         },
                         {
-                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
-                          "pctr": 0.044435970163358526,
-                          "rank": 3
+                          "article_id": "news-e5af32c3ba3944bb901c97f2fc2db3f0",
+                          "score": 0.02931489712111592,
+                          "position": 6
                         }
                       ],
-                      "defaulted": [],
-                      "unscored": []
+                      "next_cursor": "eyJsIjoiUGxyVEhLdE1aVm1YdF9WTiIsIm8iOjZ9"
                     }
                   },
                   "new_reader": {
-                    "summary": "신규 독자: 독자 피처가 없어도 200, defaulted로 알림",
+                    "summary": "처음 보는 독자",
                     "value": {
-                      "request_id": "019a4c00-0000-7000-8000-000000000001",
-                      "model_version": "lgbm@gcs-1795600000000000",
-                      "features_as_of": "2026-11-25T10:00:00+09:00",
-                      "ranked": [
+                      "model_version": "pctr@3",
+                      "items": [
                         {
                           "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                          "pctr": 0.07628236693084467,
-                          "rank": 1
+                          "score": 0.07628236693084467,
+                          "position": 1
                         },
                         {
                           "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
-                          "pctr": 0.07245577594668451,
-                          "rank": 2
-                        },
-                        {
-                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
-                          "pctr": 0.0493020673989174,
-                          "rank": 3
+                          "score": 0.07245577594668451,
+                          "position": 2
                         }
                       ],
-                      "defaulted": [
-                        {
-                          "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                          "reason": "READER_FEATURES_NOT_FOUND"
-                        },
-                        {
-                          "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
-                          "reason": "READER_FEATURES_NOT_FOUND"
-                        },
-                        {
-                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
-                          "reason": "READER_FEATURES_NOT_FOUND"
-                        }
-                      ],
-                      "unscored": []
+                      "next_cursor": "eyJsIjoiSWxwNE96cm9ILUF1VWpLeSIsIm8iOjJ9"
                     }
                   },
-                  "new_or_wrong_article": {
-                    "summary": "임베딩 없는 새 기사(defaulted)와 형식이 틀린 ID(unscored)",
+                  "empty": {
+                    "summary": "조건에 맞는 기사가 없음",
                     "value": {
-                      "request_id": "019a4c00-0000-7000-8000-000000000001",
-                      "model_version": "lgbm@gcs-1795600000000000",
-                      "features_as_of": "2026-11-25T10:00:00+09:00",
-                      "ranked": [
+                      "model_version": "pctr@3",
+                      "items": []
+                    }
+                  },
+                  "last": {
+                    "summary": "마지막 페이지: next_cursor가 null",
+                    "value": {
+                      "model_version": "pctr@3",
+                      "items": [
+                        {
+                          "article_id": "news-6114c3bd99ff40adb23206c824309cd2",
+                          "score": 0.04034340105128488,
+                          "position": 4
+                        },
                         {
                           "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                          "pctr": 0.07937376559831806,
-                          "rank": 1
+                          "score": 0.036329614772921785,
+                          "position": 5
                         },
                         {
-                          "article_id": "news-00000000000000000000000000000000",
-                          "pctr": 0.06834313828865744,
-                          "rank": 2
-                        },
-                        {
-                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
-                          "pctr": 0.044435970163358526,
-                          "rank": 3
-                        }
-                      ],
-                      "defaulted": [
-                        {
-                          "article_id": "news-00000000000000000000000000000000",
-                          "reason": "ARTICLE_FEATURES_NOT_FOUND"
-                        }
-                      ],
-                      "unscored": [
-                        {
-                          "article_id": "wrong-id",
-                          "reason": "UNKNOWN_ARTICLE"
+                          "article_id": "news-e5af32c3ba3944bb901c97f2fc2db3f0",
+                          "score": 0.02931489712111592,
+                          "position": 6
                         }
                       ]
-                    }
-                  },
-                  "top_k": {
-                    "summary": "top_k로 상위 2개만 받기",
-                    "value": {
-                      "request_id": "019a4c00-0000-7000-8000-000000000001",
-                      "model_version": "lgbm@gcs-1795600000000000",
-                      "features_as_of": "2026-11-25T10:00:00+09:00",
-                      "ranked": [
-                        {
-                          "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
-                          "pctr": 0.10879145586504865,
-                          "rank": 1
-                        },
-                        {
-                          "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
-                          "pctr": 0.07937376559831806,
-                          "rank": 2
-                        }
-                      ],
-                      "defaulted": [],
-                      "unscored": []
                     }
                   }
                 }
@@ -340,46 +172,32 @@
             }
           },
           "400": {
-            "description": "필드가 없거나 형식이 틀림",
+            "description": "필드가 틀렸거나 cursor가 만료·불일치",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequest"
                 },
                 "examples": {
-                  "no_candidates": {
-                    "summary": "후보 빈 배열",
+                  "size": {
+                    "summary": "size가 1~50 밖",
                     "value": {
-                      "error": "List should have at least 1 item after validation, not 0",
-                      "field": "body.candidates"
+                      "error": "Input should be greater than or equal to 1",
+                      "field": "body.size"
                     }
                   },
-                  "no_timezone": {
-                    "summary": "시간대 없음",
+                  "cursor_expired": {
+                    "summary": "30분이 지난 커서 → cursor 없이 첫 조회부터",
                     "value": {
-                      "error": "Value error, request_time에 시간대가 필요하다",
-                      "field": "body.context.request_time"
+                      "error": "cursor가 만료됐다",
+                      "field": "body.cursor"
                     }
                   },
-                  "missing_reader": {
-                    "summary": "reader_id 누락",
+                  "cursor_mismatch": {
+                    "summary": "첫 조회와 다른 분류로 커서를 보냄",
                     "value": {
-                      "error": "Field required",
-                      "field": "body.reader_id"
-                    }
-                  },
-                  "duplicate": {
-                    "summary": "후보 중복",
-                    "value": {
-                      "error": "Value error, candidates에 중복이 있다",
-                      "field": "body.candidates"
-                    }
-                  },
-                  "top_k_range": {
-                    "summary": "top_k 범위 초과",
-                    "value": {
-                      "error": "top_k는 1 이상, candidates 개수 이하여야 한다",
-                      "field": "body.top_k"
+                      "error": "cursor가 이 reader_id·category·subcategory의 것이 아니다",
+                      "field": "body.cursor"
                     }
                   }
                 }
@@ -426,7 +244,7 @@
           "field": {
             "type": "string",
             "title": "Field",
-            "description": "틀린 필드(예: body.candidates)"
+            "description": "틀린 필드(예: body.size). body.cursor면 커서가 만료됐거나 틀린 것이니 cursor 없이 첫 조회부터 다시 부른다."
           }
         },
         "type": "object",
@@ -436,15 +254,91 @@
         ],
         "title": "BadRequest"
       },
-      "Context": {
+      "RecommendItem": {
         "properties": {
-          "request_time": {
+          "article_id": {
             "type": "string",
-            "format": "date-time",
-            "title": "Request Time",
-            "description": "WAS가 피드 요청을 받은 시각. 시간대를 꼭 붙인다(예: +09:00, Z). 기사 나이·시간대 피처의 기준이다. 반환 기록의 served_at과 같은 값을 넣는다."
+            "title": "Article Id",
+            "description": "기사 ID(news_articles.id). WAS는 이 ID로 기사 정보를 DB에서 가져온다."
           },
-          "device": {
+          "score": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "description": "이 독자가 이 기사를 열 확률 예측값(0~1). 반환 기록(news_impressions)의 score에 그대로 저장한다."
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Position",
+            "description": "누적 추천 순서. 첫 페이지는 1부터, 다음 페이지는 이어서 21, 22 …. 반환 기록의 position에 그대로 쓸 수 있다. items 배열은 이 순서대로 정렬돼 있다."
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_id",
+          "score",
+          "position"
+        ],
+        "title": "RecommendItem"
+      },
+      "RecommendRequest": {
+        "properties": {
+          "reader_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Reader Id",
+            "description": "독자 ID. WAS가 news_reader 쿠키에서 검증한 reader_id(UUID7 문자열)를 그대로 넣는다. 이 값으로 독자 피처를 찾는다. 처음 보는 독자도 200을 돌려준다."
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category",
+            "description": "대분류. 독자가 화면에서 고른 값을 그대로 넣는다(CAT001 category_list의 값, 예: 정치). \"전체\"면 생략하거나 null. 이 대분류 기사만 추천한다."
+          },
+          "subcategory": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subcategory",
+            "description": "소분류. 독자가 고른 값을 그대로 넣는다(CAT002 sub_category_list의 값, 예: 북한). \"전체\"면 생략하거나 null. category와 같이 오면 둘 다 맞는 기사만 추천한다."
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Size",
+            "description": "이번에 받을 기사 수. 1~50, 기본 20.",
+            "default": 20
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor",
+            "description": "다음 페이지 위치. 첫 조회는 생략하거나 null. 다음 조회는 직전 응답의 next_cursor를 그대로 넣는다. WAS는 값을 해석하거나 바꾸지 않는다. 첫 조회와 같은 reader_id·category·subcategory로 보내야 한다."
+          },
+          "request_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -453,171 +347,51 @@
                 "type": "null"
               }
             ],
-            "title": "Device",
-            "description": "독자 기기: mobile, desktop, tablet 또는 null. 지금 모델은 쓰지 않으므로 생략해도 결과가 같다."
+            "title": "Request Id",
+            "description": "선택. WAS의 피드 request_id. 넣으면 추천 서버 로그에 남아 반환 기록과 대조할 수 있다. 결과에는 영향이 없다."
           }
         },
         "type": "object",
         "required": [
-          "request_time"
+          "reader_id"
         ],
-        "title": "Context"
+        "title": "RecommendRequest"
       },
-      "RankRequest": {
+      "RecommendResponse": {
         "properties": {
-          "request_id": {
+          "model_version": {
             "type": "string",
-            "title": "Request Id",
-            "description": "이번 피드 응답 번호. WAS가 만든 값을 그대로 돌려준다(로그 대조용). 반환 기록의 request_id와 같은 값을 넣는다."
+            "title": "Model Version",
+            "description": "점수를 낸 모델 버전. 반환 기록의 model_version에 그대로 저장한다. 다음 페이지도 첫 조회와 같은 값이다."
           },
-          "reader_id": {
-            "type": "string",
-            "title": "Reader Id",
-            "description": "익명 독자 ID(쿠키에서 검증한 reader_id). 독자 피처를 찾는 열쇠다."
-          },
-          "candidates": {
+          "items": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/RecommendItem"
             },
             "type": "array",
-            "maxItems": 200,
-            "minItems": 1,
-            "title": "Candidates",
-            "description": "점수를 매길 article_id 목록(news_articles.id, news- 뒤 16진수 32자). 1~200개, 권장 20~30개. 추천 전에 보여 줄 순서대로 넣는다. 이 순서가 모델의 position(1부터) 피처가 된다. 중복 없이 넣는다."
+            "title": "Items",
+            "description": "추천 순서대로 정렬한 기사. 최대 size개. 조건에 맞는 기사가 없으면 빈 배열. 이 순서대로 화면에 보여 준다."
           },
-          "context": {
-            "$ref": "#/components/schemas/Context",
-            "description": "요청 시점의 정보"
-          },
-          "top_k": {
+          "next_cursor": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": 1.0
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Top K",
-            "description": "점수 상위 몇 개를 돌려받을지. 1 이상, candidates 개수 이하. 생략하거나 null이면 점수를 낸 후보를 모두 돌려준다. 순서만 바꾸려면 생략한다. 잘린 후보는 ranked·defaulted·unscored 어디에도 없다."
+            "title": "Next Cursor",
+            "description": "다음 페이지 위치. 다음 조회 때 cursor에 그대로 넣는다. 더 줄 기사가 없으면 null."
           }
         },
         "type": "object",
         "required": [
-          "request_id",
-          "reader_id",
-          "candidates",
-          "context"
-        ],
-        "title": "RankRequest"
-      },
-      "RankResponse": {
-        "properties": {
-          "request_id": {
-            "type": "string",
-            "title": "Request Id",
-            "description": "요청의 request_id 그대로"
-          },
-          "model_version": {
-            "type": "string",
-            "title": "Model Version",
-            "description": "점수를 낸 모델 버전. 반환 기록의 model_version에 그대로 넣는다."
-          },
-          "features_as_of": {
-            "type": "string",
-            "title": "Features As Of",
-            "description": "피처 기준 시각. 지금은 임시로 request_time을 그대로 돌려준다. 실제 피처 시각이 될 때까지 DB에 저장하지 않는다(NULL)."
-          },
-          "ranked": {
-            "items": {
-              "$ref": "#/components/schemas/RankedItem"
-            },
-            "type": "array",
-            "title": "Ranked",
-            "description": "점수를 낸 기사. 이 배열 순서대로 화면에 보여 준다."
-          },
-          "defaulted": {
-            "items": {
-              "$ref": "#/components/schemas/ReasonItem"
-            },
-            "type": "array",
-            "title": "Defaulted",
-            "description": "피처 일부가 없이 점수를 낸 기사. ranked에도 들어 있다. 오류가 아니며 순서를 바꿀 필요가 없다(기록용)."
-          },
-          "unscored": {
-            "items": {
-              "$ref": "#/components/schemas/ReasonItem"
-            },
-            "type": "array",
-            "title": "Unscored",
-            "description": "점수를 내지 못한 기사. ranked에 없다. ranked 뒤에 붙인다(score는 NULL)."
-          }
-        },
-        "type": "object",
-        "required": [
-          "request_id",
           "model_version",
-          "features_as_of",
-          "ranked",
-          "defaulted",
-          "unscored"
+          "items",
+          "next_cursor"
         ],
-        "title": "RankResponse"
-      },
-      "RankedItem": {
-        "properties": {
-          "article_id": {
-            "type": "string",
-            "title": "Article Id",
-            "description": "요청한 candidates 중 하나"
-          },
-          "pctr": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Pctr",
-            "description": "이 독자가 이 기사를 열 확률 예측값(0~1). 반환 기록의 score에 넣는다."
-          },
-          "rank": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Rank",
-            "description": "추천 순위. 1부터, pctr이 높은 순서"
-          }
-        },
-        "type": "object",
-        "required": [
-          "article_id",
-          "pctr",
-          "rank"
-        ],
-        "title": "RankedItem"
-      },
-      "ReasonItem": {
-        "properties": {
-          "article_id": {
-            "type": "string",
-            "title": "Article Id",
-            "description": "요청한 candidates 중 하나"
-          },
-          "reason": {
-            "type": "string",
-            "enum": [
-              "READER_FEATURES_NOT_FOUND",
-              "ARTICLE_FEATURES_NOT_FOUND",
-              "UNKNOWN_ARTICLE"
-            ],
-            "title": "Reason",
-            "description": "READER_FEATURES_NOT_FOUND(독자 피처 없음), ARTICLE_FEATURES_NOT_FOUND(기사 임베딩 없음), UNKNOWN_ARTICLE(article_id 형식이 틀림)"
-          }
-        },
-        "type": "object",
-        "required": [
-          "article_id",
-          "reason"
-        ],
-        "title": "ReasonItem"
+        "title": "RecommendResponse"
       },
       "Unavailable": {
         "properties": {

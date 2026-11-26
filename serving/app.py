@@ -1,8 +1,10 @@
-"""추론 서버. 뉴스 백엔드의 POST /v1/rank 요청에 PCTR 점수와 순위를 돌려준다."""
+"""추천 서버. 뉴스 WAS의 POST /v1/recommend에 추천 순서의 기사 ID·점수를 돌려준다.
+
+/v1/rank(후보를 받아 점수만 매기기)는 내부 확인용으로 남긴다."""
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +18,8 @@ from pydantic import BaseModel, Field, field_validator
 from . import examples
 from .features import ARTICLE_ID, fetch_online, missing_flags, to_matrix
 from .model import Model, check_scores
+from .recommend import (CandidatePool, CursorError, decode_cursor, load_ranking, make_lists, page,
+                        save_ranking)
 
 ROOT = Path(__file__).resolve().parents[1]
 logger = logging.getLogger("uvicorn.error")
@@ -35,6 +39,42 @@ class Context(BaseModel):
         if value.tzinfo is None:
             raise ValueError("request_time에 시간대가 필요하다")
         return value
+
+
+class RecommendRequest(BaseModel):
+    reader_id: str = Field(min_length=1, description=(
+        "독자 ID. WAS가 news_reader 쿠키에서 검증한 reader_id(UUID7 문자열)를 그대로 넣는다. "
+        "이 값으로 독자 피처를 찾는다. 처음 보는 독자도 200을 돌려준다."))
+    category: str | None = Field(default=None, min_length=1, description=(
+        "대분류. 독자가 화면에서 고른 값을 그대로 넣는다(CAT001 category_list의 값, 예: 정치). "
+        "\"전체\"면 생략하거나 null. 이 대분류 기사만 추천한다."))
+    subcategory: str | None = Field(default=None, min_length=1, description=(
+        "소분류. 독자가 고른 값을 그대로 넣는다(CAT002 sub_category_list의 값, 예: 북한). "
+        "\"전체\"면 생략하거나 null. category와 같이 오면 둘 다 맞는 기사만 추천한다."))
+    size: int = Field(default=20, ge=1, le=50, description="이번에 받을 기사 수. 1~50, 기본 20.")
+    cursor: str | None = Field(default=None, min_length=1, description=(
+        "다음 페이지 위치. 첫 조회는 생략하거나 null. 다음 조회는 직전 응답의 next_cursor를 그대로 넣는다. "
+        "WAS는 값을 해석하거나 바꾸지 않는다. 첫 조회와 같은 reader_id·category·subcategory로 보내야 한다."))
+    request_id: str | None = Field(default=None, description=(
+        "선택. WAS의 피드 request_id. 넣으면 추천 서버 로그에 남아 반환 기록과 대조할 수 있다. 결과에는 영향이 없다."))
+
+
+class RecommendItem(BaseModel):
+    article_id: str = Field(description="기사 ID(news_articles.id). WAS는 이 ID로 기사 정보를 DB에서 가져온다.")
+    score: float = Field(ge=0, le=1, description=(
+        "이 독자가 이 기사를 열 확률 예측값(0~1). 반환 기록(news_impressions)의 score에 그대로 저장한다."))
+    position: int = Field(ge=1, description=(
+        "누적 추천 순서. 첫 페이지는 1부터, 다음 페이지는 이어서 21, 22 …. "
+        "반환 기록의 position에 그대로 쓸 수 있다. items 배열은 이 순서대로 정렬돼 있다."))
+
+
+class RecommendResponse(BaseModel):
+    model_version: str = Field(description=(
+        "점수를 낸 모델 버전. 반환 기록의 model_version에 그대로 저장한다. 다음 페이지도 첫 조회와 같은 값이다."))
+    items: list[RecommendItem] = Field(description=(
+        "추천 순서대로 정렬한 기사. 최대 size개. 조건에 맞는 기사가 없으면 빈 배열. 이 순서대로 화면에 보여 준다."))
+    next_cursor: str | None = Field(description=(
+        "다음 페이지 위치. 다음 조회 때 cursor에 그대로 넣는다. 더 줄 기사가 없으면 null."))
 
 
 class RankRequest(BaseModel):
@@ -72,7 +112,8 @@ class ReasonItem(BaseModel):
 
 class BadRequest(BaseModel):
     error: str = Field(description="틀린 이유")
-    field: str = Field(description="틀린 필드(예: body.candidates)")
+    field: str = Field(description=(
+        "틀린 필드(예: body.size). body.cursor면 커서가 만료됐거나 틀린 것이니 cursor 없이 첫 조회부터 다시 부른다."))
 
 
 class Unavailable(BaseModel):
@@ -102,6 +143,8 @@ async def lifespan(app: FastAPI):
     app.state.ready = False
     app.state.store = None
     app.state.model = None
+    app.state.pool = CandidatePool()
+    app.state.lists = make_lists()
     try:
         app.state.store = load_store()
         model = Model()
@@ -113,26 +156,16 @@ async def lifespan(app: FastAPI):
     yield
 
 
-DESCRIPTION = """뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.
+DESCRIPTION = """뉴스 WAS가 추천순 피드를 만들 때 부르는 API. WAS는 `POST /v1/recommend` 하나만 부른다.
 
-
-| API | 누가 부르나 | 언제 |
-|---|---|---|
-| `POST /v1/rank` | 뉴스 WAS | 피드 요청마다 한 번 |
-| `GET /healthz` | 쿠버네티스 liveness | 주기적으로 |
-| `GET /readyz` | 쿠버네티스 readiness | 주기적으로 |
-| `GET /v1/model` | 사람 | 올라간 모델을 확인할 때 |
-
-WAS는 `POST /v1/rank`만 부른다.
-
-- 순서: 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로, `unscored`는 뒤에 붙여 응답 → 반환 기록 저장
-- 반환 기록: `ranked[].pctr` → `score`, `model_version` → `model_version`. `features_as_of`는 임시값이라 NULL로 둔다.
-- 실패(400·503·시간 초과·연결 실패): WAS가 추천 없이 응답한다. 이때 어떤 순서로 보여 줄지와 타임아웃은 WAS가 정한다.
-  반환 기록은 `score` NULL, `model_version` `fallback`을 제안한다.
-- 응답 시간 목표: P99 200ms(아직 Valkey에서 재지 않음)
-- 아직 안 되는 것: `features_as_of`는 `request_time`을 그대로 돌려준다. `UNKNOWN_ARTICLE`은 ID 형식만 보고, 형식이 맞지만 없는 기사는
-  `ARTICLE_FEATURES_NOT_FOUND`로 점수를 낸다.
-- 인증 없음. 클러스터 내부에서만 부른다.
+- 첫 조회: 프런트가 추천순·분류 조건으로 피드를 요청 → WAS가 `reader_id`·`category`·`subcategory`·`size`(20)로 호출
+  → 받은 `items` 순서대로 기사 정보를 DB에서 가져와 응답을 만들고 반환 기록을 저장 → `next_cursor`를 프런트에 전달
+- 다음 조회: 프런트가 받은 커서로 요청 → WAS가 같은 `reader_id`·`category`·`subcategory`와 `cursor`로 호출
+- 분류 조건을 바꾸거나 새로고침하면 `cursor` 없이 첫 조회부터 다시 부른다.
+- 후보 선정(지금은 해당 분류의 최신 기사 200개), 점수 계산, 정렬, 페이지 나누기, 페이지 간 중복·누락 방지는 추천 서버가 한다.
+- 정렬 결과는 30분 동안 유지된다. 30분이 지난 커서는 400(`field`: `body.cursor`)이고, 첫 조회부터 다시 부른다.
+- 실패하면 503이다. 다른 정렬로 대체할지는 WAS가 정한다.
+- 인증 없음. VPC 내부 주소로만 부른다. 응답 시간 목표 P99 200ms.
 """
 app = FastAPI(title="news-rec inference", version="1.0.0", description=DESCRIPTION, lifespan=lifespan)
 
@@ -167,13 +200,13 @@ async def validation_error(request, exc: RequestValidationError):
     return JSONResponse(status_code=400, content={"error": first.get("msg", "invalid"), "field": field})
 
 
-@app.get("/healthz", summary="프로세스 생존 확인(쿠버네티스용)")
+@app.get("/healthz", include_in_schema=False, summary="프로세스 생존 확인(쿠버네티스용)")
 def healthz() -> dict:
     """프로세스가 살아 있으면 200. 모델·Valkey 상태는 보지 않는다. 쿠버네티스 liveness가 부르고 WAS는 부르지 않는다."""
     return {"status": "ok"}
 
 
-@app.get("/readyz", responses=UNAVAILABLE, summary="요청을 받을 준비 확인(쿠버네티스용)")
+@app.get("/readyz", include_in_schema=False, responses=UNAVAILABLE, summary="요청을 받을 준비 확인(쿠버네티스용)")
 def readyz() -> dict:
     """시작할 때 모델과 Feast 정의를 읽었으면 200, 못 읽었으면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.
 
@@ -184,7 +217,7 @@ def readyz() -> dict:
     return {"status": "ready", "model_version": app.state.model.version}
 
 
-@app.get("/v1/model", responses=UNAVAILABLE, summary="올라간 모델 버전(운영 확인용)")
+@app.get("/v1/model", include_in_schema=False, responses=UNAVAILABLE, summary="올라간 모델 버전(운영 확인용)")
 def model_version() -> dict:
     """지금 올라간 모델 버전. 사람이 확인할 때 쓰고 WAS는 부르지 않는다(/v1/rank 응답에 들어 있다)."""
     if not app.state.ready:
@@ -192,7 +225,52 @@ def model_version() -> dict:
     return {"model_version": app.state.model.version}
 
 
-@app.post("/v1/rank", response_model=RankResponse, summary="후보 기사 순위 매기기", responses={
+@app.post("/v1/recommend", response_model=RecommendResponse, summary="추천 피드 한 페이지", responses={
+    200: documented(RecommendResponse, "추천 순서의 기사 ID·점수. 신규 독자도 200이다.", examples.RECOMMEND_RESPONSES),
+    400: documented(BadRequest, "필드가 틀렸거나 cursor가 만료·불일치", examples.RECOMMEND_BAD_REQUESTS),
+    **UNAVAILABLE,
+})
+def recommend(request: RecommendRequest = Body(openapi_examples=examples.RECOMMEND_REQUESTS)) -> RecommendResponse:
+    """독자 1명의 추천 피드를 size개씩 돌려준다. 자세한 흐름은 맨 위 설명을 본다."""
+    if not app.state.ready:
+        raise HTTPException(503, detail="not ready")
+    filters = (request.reader_id, request.category, request.subcategory)
+    lists = app.state.lists
+
+    if request.cursor is not None:
+        try:
+            list_id, offset = decode_cursor(request.cursor)
+            saved = load_ranking(lists, list_id, *filters)
+            items, next_cursor = page(saved, list_id, offset, request.size)
+        except CursorError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc), "field": "body.cursor"})
+        except Exception as exc:
+            logger.exception("추천 목록 읽기 실패 request_id=%s", request.request_id)
+            raise HTTPException(503, detail="inference failed") from exc
+        return RecommendResponse(model_version=saved["model_version"], next_cursor=next_cursor, items=[
+            RecommendItem(article_id=a, score=s, position=p) for p, a, s in items])
+
+    try:
+        app.state.pool.refresh(logger)
+        candidates = app.state.pool.pick(request.category, request.subcategory)
+        ranked: list[tuple[str, float]] = []
+        if candidates:
+            online = fetch_online(app.state.store, request.reader_id, candidates, datetime.now(timezone.utc))
+            scores = check_scores(app.state.model.predict(to_matrix(online)), len(candidates))
+            # 점수가 같으면 후보 순서(최신순)를 지킨다
+            order = sorted(range(len(candidates)), key=lambda i: -scores[i])
+            ranked = [(candidates[i], float(scores[i])) for i in order]
+        version = app.state.model.version
+        list_id = save_ranking(lists, *filters, version, ranked)
+        items, next_cursor = page({"items": ranked}, list_id, 0, request.size)
+    except Exception as exc:
+        logger.exception("추천 실패 request_id=%s", request.request_id)
+        raise HTTPException(503, detail="inference failed") from exc
+    return RecommendResponse(model_version=version, next_cursor=next_cursor, items=[
+        RecommendItem(article_id=a, score=s, position=p) for p, a, s in items])
+
+
+@app.post("/v1/rank", include_in_schema=False, response_model=RankResponse, summary="후보 기사 순위 매기기", responses={
     200: documented(RankResponse, "추천 순서. 신규 독자도 200이다.", examples.RESPONSES),
     400: documented(BadRequest, "필드가 없거나 형식이 틀림", examples.BAD_REQUESTS),
     **UNAVAILABLE,
