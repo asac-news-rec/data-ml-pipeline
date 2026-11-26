@@ -4,15 +4,19 @@
 같은 경로·형식으로 행동 로그 버킷에 쓴다. 다음 `load_raw` 실행이 앞 3시간을 함께 보므로
 (raw_load_lookback_hours) 이 DAG가 조금 늦게 끝나도 다음 시간에 적재된다.
 
+기본은 꺼져 있다. Variable `simulate_readers_enabled=true`일 때만 쓴다(켜기 전에 #기본에 알린다).
+
 가짜 표시는 clean.served.model_version='simulator', clean.actions.source='simulator'까지 남는다.
-Feast 원천 표에는 이 열이 없다. 실제 로그로 학습하기 전에 clean에서 걸러 원천 표를 다시 만들어야 한다.
+가상 독자 reader_id는 uuid5(SIM_NAMESPACE, ...)라 실제 독자와 겹치지 않고, Feast 피처는 모두
+reader_id별로 계산하므로 실제 독자 피처 값은 바뀌지 않는다. 학습 입력은 training/build_training_set.py가
+model_version='simulator' 행을 기본으로 뺀다(train_include_simulator=true일 때만 넣는다).
 
 실제 독자 로그가 생기면 Variable `simulate_readers_enabled`를 false로 두고, 이후 DAG를 지운다.
 
 Airflow Variables:
   feast_work_image (작업 이미지 태그, materialize와 공유), gcp_project_id, raw_gcs_bucket,
   raw_gcs_prefix(선택), feat_bq_dataset(선택, 기본 feat),
-  simulate_readers_enabled(선택, 기본 true), sim_readers(선택, 기본 200)
+  simulate_readers_enabled(선택, 기본 false), sim_readers(선택, 기본 200)
 """
 import os
 from datetime import datetime, timedelta
@@ -32,7 +36,7 @@ REQUIRED_VARS = ["feast_work_image", "gcp_project_id", "raw_gcs_bucket"]
 
 def check_config(**context) -> None:
     """꺼져 있으면 건너뛰고, 필수 Variable이 없으면 Pod를 띄우기 전에 실패한다."""
-    if Variable.get("simulate_readers_enabled", default_var="true").lower() != "true":
+    if Variable.get("simulate_readers_enabled", default_var="false").lower() != "true":
         raise AirflowSkipException("simulate_readers_enabled가 true가 아니라 건너뛴다")
     missing = [key for key in REQUIRED_VARS if not Variable.get(key, default_var=None)]
     if missing:

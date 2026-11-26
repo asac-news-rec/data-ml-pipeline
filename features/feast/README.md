@@ -64,12 +64,13 @@ Airflow Variables (아래 표에서 `(필수)`가 붙은 값 중 하나라도 �
 
 | Variable | 값 |
 | --- | --- |
+| `feast_wait_for_sources` | 같은 시간의 `build_feast_sources`가 끝나길 기다릴지 (선택, 기본 `true`. 원천 표를 로컬 스크립트로 만드는 동안은 `false`) |
 | `feast_work_image` | 작업 이미지 태그 (필수, DAG가 템플릿으로 읽는다) |
 | `feast_registry_path` | `gs://.../feast/registry.pb` (필수, 읽기·쓰기) |
 | `valkey_host` | `valkey.valkey.svc.cluster.local` (필수) |
 | `gcp_project_id` | `final-project-513508` (필수) |
 | `feast_bq_dataset` | `final-project-513508.dev_yoonmo` (필수, source table 위치) |
-| `feast_bq_temp_dataset` | `dev_yoonmo` (필수, entity_df 임시 표) |
+| `feast_bq_temp_dataset` | `dev_yoonmo` 또는 `final-project-513508.dev_yoonmo` (필수, entity_df 임시 표). 프로젝트를 쓰면 `gcp_project_id`와 같아야 한다. GitHub Variables의 `FEAST_BQ_TEMP_DATASET`에는 데이터셋 이름만 넣는다 |
 | `feast_full_materialize` | `true`면 전체 적재. 첫 적재와 Valkey가 비었을 때만 |
 | `feast_materialize_start` | 전체 적재 시작 시각 `2026-11-03T00:00:00+09:00` |
 | `feast_materialize_lookback_hours` | 늦게 온 원천 행을 덮어쓸 구간 (기본 3, 0이면 안 함) |

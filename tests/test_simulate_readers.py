@@ -194,5 +194,32 @@ class SimulateReadersTest(unittest.TestCase):
                          {"served": False, "actions": True})
 
 
+class SeparationTest(unittest.TestCase):
+    """가상 로그가 실제 데이터와 섞이지 않게 하는 장치."""
+
+    def test_reader_ids_are_uuid5_in_sim_namespace(self):
+        """가상 독자 ID는 uuid5(SIM_NAMESPACE)라 로깅 서버가 발급하는 실제 독자 ID와 겹치지 않는다."""
+        import uuid
+        ids = [r["reader_id"] for r in sim.make_readers(200)]
+        self.assertEqual(len(set(ids)), 200)
+        for i, reader_id in enumerate(ids):
+            self.assertEqual(uuid.UUID(reader_id).version, 5)
+            self.assertEqual(reader_id, str(uuid.uuid5(sim.SIM_NAMESPACE, f"reader-{i}")))
+
+    def test_feast_sources_are_per_reader(self):
+        """Feast 원천 표의 집계는 모두 reader_id별이라 가상 독자가 실제 독자 피처 값을 바꾸지 않는다."""
+        sql = (Path(__file__).resolve().parents[1] / "transform" / "sql" / "build_feast_sources.sql").read_text()
+        # 행동 로그를 쓰지 않는 기사 임베딩 중복 제거(article_vec)만 article_id별이다
+        sql = sql.replace("PARTITION BY article_id ORDER BY created_at DESC", "")
+        windows = re.findall(r"PARTITION BY\s+(?:\w+\.)?(\w+)", sql)
+        self.assertGreater(len(windows), 5)
+        self.assertEqual(set(windows), {"reader_id"})
+
+    def test_dag_is_off_by_default(self):
+        """Variable이 없으면 쓰지 않는다. 켤 때만 simulate_readers_enabled=true."""
+        src = (Path(__file__).resolve().parents[1] / "dags" / "simulate_readers.py").read_text()
+        self.assertIn('Variable.get("simulate_readers_enabled", default_var="false")', src)
+
+
 if __name__ == "__main__":
     unittest.main()

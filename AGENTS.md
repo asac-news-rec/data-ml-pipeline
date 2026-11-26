@@ -45,12 +45,16 @@
 - **[현재]** README, 에이전트 하네스(`AGENTS.md`),
   협업 규칙(`CONTRIBUTING.md`), `.github/`의 이슈·PR 양식과 workflow 3개
   (`branch-name-policy.yml`, `claude.yml`, `feast-apply.yml`), `.gitignore`,
-  저장소 루트 `pyproject.toml`·`uv.lock`, Airflow DAG 3개
+  저장소 루트 `pyproject.toml`·`uv.lock`, Airflow DAG 7개
   (`dags/hello_airflow.py`(#12), `dags/export_behavior_logs.py`(#14),
-  `dags/materialize_feast.py`(#16)), 행동 로그 내보내기 구간 테스트
+  `dags/materialize_feast.py`(#16), `dags/load_raw.py`(#32), `dags/clean_events.py`(#34),
+  `dags/embed_articles.py`(#36), `dags/build_feast_sources.py`(#38)), GCS → BigQuery raw 적재
+  `ingest/load_raw.py`, raw → clean 정제 `transform/clean_events.py`, 기사 임베딩
+  `ingest/embed_articles.py`, Feast 원천 표 `transform/build_feast_sources.py`, 테스트 `tests/test_load_raw.py`·
+  `tests/test_clean_events.py`·`tests/test_embed_articles.py`·`tests/test_build_feast_sources.py`, 행동 로그 내보내기 구간 테스트
   `tests/test_export_bounds.py`, Feast 피처 스토어 `features/feast/`(로컬 parquet +
   SQLite, BigQuery 오프라인, GCS registry + Valkey 온라인)가 있습니다. 행동 로그
-  내보내기 DAG의 운영 Airflow 3.2.2 실검증은 아직 완료하지 않았고, 적재·정제·집계
+  내보내기·raw 적재·clean 정제 DAG의 운영 Airflow 3.2.2 실검증은 아직 완료하지 않았고, 집계
   DAG는 아직 없습니다.
 - **[임시]** 한 바퀴 시험용 `dags/simulate_readers.py`(#44)가 가상 독자 행동 로그를
   로깅 서버 내보내기 형식으로 GCS에 직접 씁니다. 실제 독자 로그가 생기면 지웁니다.
@@ -60,13 +64,13 @@
 dags/          # Airflow DAG (매시: 적재·정제·집계·피처, 매일: 집계·재학습)
 features/      # 피처 계산 SQL과 서빙용 내보내기(Valkey)
 training/      # 학습 데이터 구성, 모델 학습·평가 (baseline, LightGBM)
-serving/       # 추론 서버 점수화 코드 [미정: 이 저장소에 둘지]
+serving/       # 추론 서버 점수화 코드 [현재]
 docs/          # 피처 정의서, 지표 문서 (필요할 때 생성)
 ```
 
 - **[현재]** Python 패키지 관리는 `uv`로 정했습니다. 의존성은 저장소 루트
-  `pyproject.toml`에 묶음(`airflow-dag`, `train`)으로 두고 `uv.lock`으로 버전을
-  고정합니다. **[미정]** lint·테스트 도구, 추론 서버 코드를 둘 저장소, 이벤트
+  `pyproject.toml`에 묶음(`airflow-dag`, `embed`, `train`, `serving`)으로 두고 `uv.lock`으로 버전을
+  고정합니다. **[미정]** lint·테스트 도구, 이벤트
   필드 이름 일부.
 - 설계 배경은 `blueprint` 저장소의 처리·피처·모델 페이지(`yunmo.html`)를
   참조합니다.

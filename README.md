@@ -3,18 +3,64 @@ Data pipeline (ingest, clean, features) and ML training
 
 ## 현재 구성
 
-- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16)가 있다.
+- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34), 기사 임베딩 `embed_articles.py`(#36), Feast 원천 표 `build_feast_sources.py`(#38)가 있다.
+- `transform/`: 정제 코드. `clean_events.py`가 `sql/clean_events.sql`로 `clean.*`을 만든다. `build_feast_sources.py`는 `clean.actions` + `feat.article_*`로 Feast 원천 표 4개를 매시 다시 만든다(SQL `transform/sql/build_feast_sources.sql`, `prepare_sources.py`와 같은 계산).
+- `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다. `embed_articles.py`가 Cloud SQL 새 기사를 multilingual-e5-base로 임베딩해 `feat.article_embedding`·`feat.article_meta`에 넣는다.
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
-- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다.
-- `training/`, `serving/`, `docs/`: [계획] 아직 없다.
-- `dags/simulate_readers.py`·`ingest/simulate_readers.py`(#44): [임시] 한 바퀴 시험용 가상 독자 200명의 served·actions 로그를 매시 로깅 서버 내보내기와 같은 경로·줄 형식으로 행동 로그 버킷에 쓴다. 기사는 `feat.article_meta`에서 고르고, actions는 `source=simulator`, served는 `model_version=simulator`로 표시한다. Variable `simulate_readers_enabled=false`로 끄고, 실제 독자 로그가 생기면 지운다. 테스트 `tests/test_simulate_readers.py`.
+- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다.
+- `serving/`: 추론 서버(FastAPI, `POST /v1/rank`). 실행·환경변수는 `serving/README.md`, API 계약은 `serving/openapi.json`.
+- `training/`, `docs/`: [계획] 아직 없다.
+- `dags/simulate_readers.py`·`ingest/simulate_readers.py`(#44): [임시] 한 바퀴 시험용 가상 독자 200명의 served·actions 로그를 매시 로깅 서버 내보내기와 같은 경로·줄 형식으로 행동 로그 버킷에 쓴다. 기사는 `feat.article_meta`에서 고르고, actions는 `source=simulator`, served는 `model_version=simulator`로 표시한다. 기본은 꺼져 있다: Variable `simulate_readers_enabled=true`일 때만 쓴다. 실제 독자 로그가 생기면 지운다. 테스트 `tests/test_simulate_readers.py`.
+  - 실제 데이터와 섞이는 범위: 가상 독자 `reader_id`는 `uuid5(SIM_NAMESPACE, "reader-<i>")`로 실제 독자와 겹치지 않는다. Feast 피처(`transform/sql/build_feast_sources.sql`)는 모두 `reader_id`별로 계산하므로 실제 독자 피처 값은 바뀌지 않는다. 학습 입력은 #53 `training/build_training_set.py`가 `model_version='simulator'` 행을 기본으로 뺀다(`train_include_simulator=true`일 때만 넣는다). 운영 집계를 만들 때도 같은 조건으로 뺀다.
 
 ## 개발 환경
 
 - Python 3.12. 의존성과 버전은 저장소 루트 `pyproject.toml`과 `uv.lock`으로 고정한다.
 - Feast materialize 작업 이미지: `uv sync --frozen --extra airflow-dag`
+- 기사 임베딩 작업 이미지: `uv sync --frozen --extra embed` (torch는 CPU 빌드). 모델 `intfloat/multilingual-e5-base`를 이미지에 미리 내려받아 두고 Pod는 `HF_HUB_OFFLINE=1`로 돈다.
 - 학습 Job 이미지: `uv sync --frozen --extra train`
+- 추론 서버 이미지: `uv sync --frozen --extra serving` (`serving/Dockerfile`)
 - lint·테스트 도구는 [미정]이다. 지금은 `python -m unittest discover -s tests -v`로 테스트를 돌린다.
+
+## GCS → BigQuery raw 적재 (`load_raw`)
+
+`dags/load_raw.py`가 매시 작업 이미지(`airflow-dag` 묶음)로 `ingest/load_raw.py`를 실행한다.
+
+- 입력: `export_behavior_logs`가 쓴 `{prefix}/served|actions/interval_start={UTC}/interval_end={UTC}/part-{job_id}.jsonl.gz`.
+- 범위: `data_interval_start`가 든 UTC 한 시간과 앞 `raw_load_lookback_hours`(기본 3)시간에 **시작하는** 구간의 파일.
+- 출력: `raw.served`(`impression_id`, `request_id`, `served_at`), `raw.actions`(`event_id`, `event_type`, `event_time`, `impression_id`, `event_type` 클러스터링). 두 표 모두 `payload`(줄 전체 JSON), `source_file`, `load_date`, `loaded_at`을 가진다. 열은 청사진 overview.html 인터페이스 규약 ⑤를 따른다.
+- `load_date`는 파일 구간 시작의 한국 날짜이고 파티션 열이다.
+- 중복 방지: GCS 객체는 덮어쓰지 않으므로 `source_file`이 이미 표에 있으면 건너뛴다. 같은 시간을 다시 돌려도 행이 늘지 않는다. 새 파일은 load job 하나로 넣어 실패하면 아무 행도 남지 않는다.
+- 표가 없으면 첫 적재 때 만든다.
+- Airflow Variable: `feast_work_image`, `gcp_project_id`, `raw_gcs_bucket`(필수), `raw_gcs_prefix`, `raw_bq_dataset`(기본 `raw`), `raw_load_lookback_hours`.
+- 권한: 작업 Pod 서비스 계정에 로그 버킷 객체 나열·읽기, `raw` 데이터셋 쓰기, BigQuery job 실행.
+
+## raw → clean 정제 (`clean_events`)
+
+`dags/clean_events.py`가 같은 시간의 `load_raw`가 끝나길 기다린 뒤 `transform/clean_events.py`를 작업 이미지로 실행한다. 범위는 `load_raw`와 같다(그 시간 + 앞 3시간에 시작한 내보내기 구간).
+
+| 표 | 한 행 | 규칙 |
+|---|---|---|
+| `clean.served` | impression 1건 | `impression_id`로 중복 제거. 파티션 `served_date`(한국 날짜) |
+| `clean.actions` | 행동 1건 | `event_id`(소문자)로 중복 제거, `impression_id`로 served 값을 붙임. 파티션 `event_date` |
+| `clean.orphan_actions` | 짝 served가 아직 없는 행동 | 다음 실행마다 다시 보고, 짝이 생기면 `clean.actions`로 옮김 |
+| `clean.rejected_actions` | 버린 행동 + 이유 | `fraud_click`: 첫 exposure 시작(없으면 `served_at`) 뒤 0.1초 안의 article_open (11/15 멘토링). `invalid_event`: 계약 밖 값 |
+
+- 쓰기는 모두 MERGE라 같은 시간을 다시 돌려도 행이 늘지 않는다.
+- `is_bot`은 봇 기준이 정해지지 않아 모두 false다.
+- 열은 청사진 overview.html 인터페이스 규약 ⑤를 따른다. 규약 밖으로 `clean.served.received_at`을 더 둔다(늦게 온 행 찾기).
+- 시험: `CLEAN_BQ_DATASET=dev_<이름> CLEAN_TABLE_PREFIX=clean_ RAW_BQ_DATASET=dev_<이름>`로 개인 dataset에 만든다.
+
+## 기사 임베딩 (`embed_articles`)
+
+`dags/embed_articles.py`가 매시 임베딩 작업 이미지로 `ingest/embed_articles.py`를 실행한다.
+
+- 입력: Cloud SQL `public.news_articles`(backend `generate/load_postgres.py`). 접속은 `cloud-sql-proxy`, 비밀번호는 Secret Manager.
+- 글: `passage: 제목 부제 요약` (로컬 `article_embedding/embed.py`와 같다). 512토큰을 넘으면 잘린다(MVP 뒤에 다룬다).
+- 출력: `feat.article_embedding`(article_id, embedding 768칸·길이 1, model_name, model_version, created_at), `feat.article_meta`(article_id, category, subcategory, tags, publisher_id, published_at, clickbait_score, copied_at). 열은 청사진 overview.html 인터페이스 규약 ⑤를 따르고 `subcategory`를 더 둔다.
+- 중복 방지: 같은 모델·버전으로 이미 임베딩한 기사는 건너뛴다. 메타는 `article_id`가 없을 때만 넣는다.
+- Airflow Variable: `embed_work_image`, `gcp_project_id`, `embed_db_user`, `embed_db_password_secret`(필수), `embed_db_name`, `feat_bq_dataset`, `embed_model_revision`, `embed_limit`.
+- 권한: 작업 Pod 계정에 Secret 읽기, `feat` 쓰기, BigQuery job 실행. DB는 `news_articles` 읽기 전용 계정.
 
 ## 행동 로그 GCS 내보내기
 
