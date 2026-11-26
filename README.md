@@ -10,6 +10,8 @@ Data pipeline (ingest, clean, features) and ML training
 - `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다.
 - `serving/`: 추론 서버(FastAPI, `POST /v1/rank`). 실행·환경변수는 `serving/README.md`, API 계약은 `serving/openapi.json`.
 - `training/`, `docs/`: [계획] 아직 없다.
+- `dags/simulate_readers.py`·`ingest/simulate_readers.py`(#44): [임시] 한 바퀴 시험용 가상 독자 200명의 served·actions 로그를 매시 로깅 서버 내보내기와 같은 경로·줄 형식으로 행동 로그 버킷에 쓴다. 기사는 `feat.article_meta`에서 고르고, actions는 `source=simulator`, served는 `model_version=simulator`로 표시한다. 기본은 꺼져 있다: Variable `simulate_readers_enabled=true`일 때만 쓴다. 실제 독자 로그가 생기면 지운다. 테스트 `tests/test_simulate_readers.py`.
+  - 실제 데이터와 섞이는 범위: 가상 독자 `reader_id`는 `uuid5(SIM_NAMESPACE, "reader-<i>")`로 실제 독자와 겹치지 않는다. Feast 피처(`transform/sql/build_feast_sources.sql`)는 모두 `reader_id`별로 계산하므로 실제 독자 피처 값은 바뀌지 않는다. [계획] 학습 입력에서 `model_version='simulator'` 행을 기본으로 빼는 조건은 #53 `training/build_training_set.py`에 있다(`train_include_simulator=true`일 때만 넣는다). 켜는 조건: #53이 main에 머지된 뒤에만 `simulate_readers_enabled=true`로 둔다. 운영 집계는 아직 없고, 만들 때 같은 조건으로 뺀다.
 
 ## 개발 환경
 
