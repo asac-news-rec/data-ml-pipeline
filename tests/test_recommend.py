@@ -127,6 +127,18 @@ class Recommend(unittest.TestCase):
         self.assertEqual(len(self.fetched), 1)          # 다음 페이지는 점수를 다시 매기지 않는다
         self.assertEqual(self.fetched[0][2].tzinfo, timezone.utc)
 
+    def test_size_20_returns_20_and_next_starts_after_last_returned(self):
+        """후보 45개, size=20: 20 → 20 → 5개. 커서는 실제로 돌려준 마지막 기사 다음에서 이어진다."""
+        pages, cursor = [], None
+        while True:
+            res = self.call(size=20, cursor=cursor)
+            pages.append([i.position for i in res.items])
+            cursor = res.next_cursor
+            if cursor is None:
+                break
+        self.assertEqual([len(p) for p in pages], [20, 20, 5])
+        self.assertEqual(sum(pages, []), list(range(1, 46)))   # 21~40번이 빠지지 않는다
+
     def test_size_and_exact_end(self):
         first = self.call(category="경제", size=15)
         self.assertEqual(len(first.items), 15)

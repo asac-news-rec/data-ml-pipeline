@@ -51,7 +51,9 @@ class RecommendRequest(BaseModel):
     subcategory: str | None = Field(title="소분류", default=None, min_length=1, description=(
         "소분류. 독자가 고른 값을 그대로 넣는다(CAT002 sub_category_list의 값, 예: 북한). "
         "\"전체\"면 생략하거나 null. category와 같이 오면 둘 다 맞는 기사만 추천한다."))
-    size: int = Field(title="받을 개수", default=20, ge=1, le=50, description="이번에 받을 기사 수. 1~50, 기본 20.")
+    size: int = Field(title="받을 개수", default=20, ge=1, le=50, description=(
+        "이번에 받을 기사 수. 1~50, 기본 20. 응답 items는 최대 size개만 온다(size=20이면 최대 20개). "
+        "다음 조회는 이번에 실제로 받은 기사 바로 다음부터 이어진다."))
     cursor: str | None = Field(title="다음 페이지 위치", default=None, min_length=1, description=(
         "다음 페이지 위치. 첫 조회는 생략하거나 null. 다음 조회는 직전 응답의 next_cursor를 그대로 넣는다. "
         "WAS는 값을 해석하거나 바꾸지 않는다. 첫 조회와 같은 reader_id·category·subcategory로 보내야 한다."))
@@ -74,7 +76,9 @@ class RecommendResponse(BaseModel):
     items: list[RecommendItem] = Field(title="추천 기사 목록", description=(
         "추천 순서대로 정렬한 기사. 최대 size개. 조건에 맞는 기사가 없으면 빈 배열. 이 순서대로 화면에 보여 준다."))
     next_cursor: str | None = Field(title="다음 페이지 위치", description=(
-        "다음 페이지 위치. 다음 조회 때 cursor에 그대로 넣는다. 더 줄 기사가 없으면 null."))
+        "다음 페이지 위치. 이번 응답에서 실제로 돌려준 마지막 기사 바로 다음 위치다"
+        "(예: size=20으로 1~20번을 받았으면 다음 조회는 21번부터). 다음 조회 때 cursor에 그대로 넣는다. "
+        "더 줄 기사가 없으면 null."))
 
 
 class RankRequest(BaseModel):
