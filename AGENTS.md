@@ -62,13 +62,13 @@
 dags/          # Airflow DAG (매시: 적재·정제·집계·피처, 매일: 집계·재학습)
 features/      # 피처 계산 SQL과 서빙용 내보내기(Valkey)
 training/      # 학습 데이터 구성, 모델 학습·평가 (baseline, LightGBM)
-serving/       # 추론 서버 점수화 코드 [미정: 이 저장소에 둘지]
+serving/       # 추론 서버 점수화 코드 [현재]
 docs/          # 피처 정의서, 지표 문서 (필요할 때 생성)
 ```
 
 - **[현재]** Python 패키지 관리는 `uv`로 정했습니다. 의존성은 저장소 루트
-  `pyproject.toml`에 묶음(`airflow-dag`, `train`)으로 두고 `uv.lock`으로 버전을
-  고정합니다. **[미정]** lint·테스트 도구, 추론 서버 코드를 둘 저장소, 이벤트
+  `pyproject.toml`에 묶음(`airflow-dag`, `embed`, `train`, `serving`)으로 두고 `uv.lock`으로 버전을
+  고정합니다. **[미정]** lint·테스트 도구, 이벤트
   필드 이름 일부.
 - 설계 배경은 `blueprint` 저장소의 처리·피처·모델 페이지(`yunmo.html`)를
   참조합니다.

@@ -1,0 +1,642 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "news-rec inference",
+    "description": "뉴스 피드의 후보 기사에 점수를 매겨 순서를 돌려주는 서버.\n\n\n| API | 누가 부르나 | 언제 |\n|---|---|---|\n| `POST /v1/rank` | 뉴스 WAS | 피드 요청마다 한 번 |\n| `GET /healthz` | 쿠버네티스 liveness | 주기적으로 |\n| `GET /readyz` | 쿠버네티스 readiness | 주기적으로 |\n| `GET /v1/model` | 사람 | 올라간 모델을 확인할 때 |\n\nWAS는 `POST /v1/rank`만 부른다.\n\n- 순서: 후보 조회 → `/v1/rank` 한 번 호출 → `ranked` 순서대로, `unscored`는 뒤에 붙여 응답 → 반환 기록 저장\n- 반환 기록: `ranked[].pctr` → `score`, `model_version` → `model_version`. `features_as_of`는 임시값이라 NULL로 둔다.\n- 실패(400·503·시간 초과·연결 실패): WAS가 추천 없이 응답한다. 이때 어떤 순서로 보여 줄지와 타임아웃은 WAS가 정한다.\n  반환 기록은 `score` NULL, `model_version` `fallback`을 제안한다.\n- 응답 시간 목표: P99 200ms(아직 Valkey에서 재지 않음)\n- 아직 안 되는 것: `features_as_of`는 `request_time`을 그대로 돌려준다. `UNKNOWN_ARTICLE`은 ID 형식만 보고, 형식이 맞지만 없는 기사는\n  `ARTICLE_FEATURES_NOT_FOUND`로 점수를 낸다.\n- 인증 없음. 클러스터 내부에서만 부른다.\n",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "프로세스 생존 확인(쿠버네티스용)",
+        "description": "프로세스가 살아 있으면 200. 모델·Valkey 상태는 보지 않는다. 쿠버네티스 liveness가 부르고 WAS는 부르지 않는다.",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "요청을 받을 준비 확인(쿠버네티스용)",
+        "description": "시작할 때 모델과 Feast 정의를 읽었으면 200, 읽기 전이면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.\n\n읽기에 실패하면 프로세스가 끝나고 쿠버네티스가 다시 띄운다.\n\nValkey 접속은 확인하지 않는다. Valkey 장애는 /v1/rank의 503으로 드러난다.",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Readyz Readyz Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "모델·피처 저장소를 쓸 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unavailable"
+                },
+                "examples": {
+                  "not_ready": {
+                    "summary": "모델이나 Feast 정의를 못 읽음",
+                    "value": {
+                      "detail": "not ready"
+                    }
+                  },
+                  "failed": {
+                    "summary": "피처 조회나 예측 실패",
+                    "value": {
+                      "detail": "inference failed"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/model": {
+      "get": {
+        "summary": "올라간 모델 버전(운영 확인용)",
+        "description": "지금 올라간 모델 버전. 사람이 확인할 때 쓰고 WAS는 부르지 않는다(/v1/rank 응답에 들어 있다).",
+        "operationId": "model_version_v1_model_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Model Version V1 Model Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "모델·피처 저장소를 쓸 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unavailable"
+                },
+                "examples": {
+                  "not_ready": {
+                    "summary": "모델이나 Feast 정의를 못 읽음",
+                    "value": {
+                      "detail": "not ready"
+                    }
+                  },
+                  "failed": {
+                    "summary": "피처 조회나 예측 실패",
+                    "value": {
+                      "detail": "inference failed"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rank": {
+      "post": {
+        "summary": "후보 기사 순위 매기기",
+        "description": "독자 1명과 후보 기사를 받아 기사를 열 확률(pctr)이 높은 순서로 돌려준다.\n\n- 누가·언제: 뉴스 WAS가 피드 요청마다 후보를 조회한 뒤 한 번 부른다. 기사마다 따로 부르지 않는다.\n- 200: ranked 순서대로 보여 주고 unscored를 뒤에 붙인다. 신규 독자도 200이다.\n- 400: 요청이 틀렸다(코드 버그). 추천 없이 응답하고 오류 로그를 남긴다.\n- 503·시간 초과·연결 실패: 추천 없이 응답한다. 반환 기록은 score=NULL, model_version=\"fallback\"을 제안한다.",
+        "operationId": "rank_v1_rank_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RankRequest"
+              },
+              "examples": {
+                "basic": {
+                  "summary": "기본: 피처가 다 있는 독자와 기사",
+                  "value": {
+                    "request_id": "019a4c00-0000-7000-8000-000000000001",
+                    "reader_id": "01a111ba-8980-7b67-997d-ae94d226a8b3",
+                    "candidates": [
+                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                      "news-f9e5ad4cee1a465d95058050b2b6f234",
+                      "news-b5821dcb81e9466f920c6588a50523d7"
+                    ],
+                    "context": {
+                      "request_time": "2026-11-25T10:00:00+09:00",
+                      "device": "mobile"
+                    }
+                  }
+                },
+                "new_reader": {
+                  "summary": "신규 독자: 독자 피처가 없어도 200, defaulted로 알림",
+                  "value": {
+                    "request_id": "019a4c00-0000-7000-8000-000000000001",
+                    "reader_id": "019a4c00-0000-7000-8000-000000000099",
+                    "candidates": [
+                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                      "news-f9e5ad4cee1a465d95058050b2b6f234",
+                      "news-b5821dcb81e9466f920c6588a50523d7"
+                    ],
+                    "context": {
+                      "request_time": "2026-11-25T10:00:00+09:00",
+                      "device": "mobile"
+                    }
+                  }
+                },
+                "new_or_wrong_article": {
+                  "summary": "임베딩 없는 새 기사(defaulted)와 형식이 틀린 ID(unscored)",
+                  "value": {
+                    "request_id": "019a4c00-0000-7000-8000-000000000001",
+                    "reader_id": "01a111ba-8980-7b67-997d-ae94d226a8b3",
+                    "candidates": [
+                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                      "news-f9e5ad4cee1a465d95058050b2b6f234",
+                      "news-00000000000000000000000000000000",
+                      "wrong-id"
+                    ],
+                    "context": {
+                      "request_time": "2026-11-25T10:00:00+09:00",
+                      "device": "mobile"
+                    }
+                  }
+                },
+                "top_k": {
+                  "summary": "top_k로 상위 2개만 받기",
+                  "value": {
+                    "request_id": "019a4c00-0000-7000-8000-000000000001",
+                    "reader_id": "01a111ba-8980-7b67-997d-ae94d226a8b3",
+                    "candidates": [
+                      "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                      "news-f9e5ad4cee1a465d95058050b2b6f234",
+                      "news-b5821dcb81e9466f920c6588a50523d7"
+                    ],
+                    "context": {
+                      "request_time": "2026-11-25T10:00:00+09:00",
+                      "device": "mobile"
+                    },
+                    "top_k": 2
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "추천 순서. 신규 독자도 200이다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RankResponse"
+                },
+                "examples": {
+                  "basic": {
+                    "summary": "기본: 피처가 다 있는 독자와 기사",
+                    "value": {
+                      "request_id": "019a4c00-0000-7000-8000-000000000001",
+                      "model_version": "lgbm@gcs-1795600000000000",
+                      "features_as_of": "2026-11-25T10:00:00+09:00",
+                      "ranked": [
+                        {
+                          "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
+                          "pctr": 0.10879145586504865,
+                          "rank": 1
+                        },
+                        {
+                          "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                          "pctr": 0.07937376559831806,
+                          "rank": 2
+                        },
+                        {
+                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
+                          "pctr": 0.044435970163358526,
+                          "rank": 3
+                        }
+                      ],
+                      "defaulted": [],
+                      "unscored": []
+                    }
+                  },
+                  "new_reader": {
+                    "summary": "신규 독자: 독자 피처가 없어도 200, defaulted로 알림",
+                    "value": {
+                      "request_id": "019a4c00-0000-7000-8000-000000000001",
+                      "model_version": "lgbm@gcs-1795600000000000",
+                      "features_as_of": "2026-11-25T10:00:00+09:00",
+                      "ranked": [
+                        {
+                          "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                          "pctr": 0.07628236693084467,
+                          "rank": 1
+                        },
+                        {
+                          "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
+                          "pctr": 0.07245577594668451,
+                          "rank": 2
+                        },
+                        {
+                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
+                          "pctr": 0.0493020673989174,
+                          "rank": 3
+                        }
+                      ],
+                      "defaulted": [
+                        {
+                          "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                          "reason": "READER_FEATURES_NOT_FOUND"
+                        },
+                        {
+                          "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
+                          "reason": "READER_FEATURES_NOT_FOUND"
+                        },
+                        {
+                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
+                          "reason": "READER_FEATURES_NOT_FOUND"
+                        }
+                      ],
+                      "unscored": []
+                    }
+                  },
+                  "new_or_wrong_article": {
+                    "summary": "임베딩 없는 새 기사(defaulted)와 형식이 틀린 ID(unscored)",
+                    "value": {
+                      "request_id": "019a4c00-0000-7000-8000-000000000001",
+                      "model_version": "lgbm@gcs-1795600000000000",
+                      "features_as_of": "2026-11-25T10:00:00+09:00",
+                      "ranked": [
+                        {
+                          "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                          "pctr": 0.07937376559831806,
+                          "rank": 1
+                        },
+                        {
+                          "article_id": "news-00000000000000000000000000000000",
+                          "pctr": 0.06834313828865744,
+                          "rank": 2
+                        },
+                        {
+                          "article_id": "news-f9e5ad4cee1a465d95058050b2b6f234",
+                          "pctr": 0.044435970163358526,
+                          "rank": 3
+                        }
+                      ],
+                      "defaulted": [
+                        {
+                          "article_id": "news-00000000000000000000000000000000",
+                          "reason": "ARTICLE_FEATURES_NOT_FOUND"
+                        }
+                      ],
+                      "unscored": [
+                        {
+                          "article_id": "wrong-id",
+                          "reason": "UNKNOWN_ARTICLE"
+                        }
+                      ]
+                    }
+                  },
+                  "top_k": {
+                    "summary": "top_k로 상위 2개만 받기",
+                    "value": {
+                      "request_id": "019a4c00-0000-7000-8000-000000000001",
+                      "model_version": "lgbm@gcs-1795600000000000",
+                      "features_as_of": "2026-11-25T10:00:00+09:00",
+                      "ranked": [
+                        {
+                          "article_id": "news-b5821dcb81e9466f920c6588a50523d7",
+                          "pctr": 0.10879145586504865,
+                          "rank": 1
+                        },
+                        {
+                          "article_id": "news-e4e9ea303b1f40ecbccb1f037f08ea1a",
+                          "pctr": 0.07937376559831806,
+                          "rank": 2
+                        }
+                      ],
+                      "defaulted": [],
+                      "unscored": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "필드가 없거나 형식이 틀림",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequest"
+                },
+                "examples": {
+                  "no_candidates": {
+                    "summary": "후보 빈 배열",
+                    "value": {
+                      "error": "List should have at least 1 item after validation, not 0",
+                      "field": "body.candidates"
+                    }
+                  },
+                  "no_timezone": {
+                    "summary": "시간대 없음",
+                    "value": {
+                      "error": "Value error, request_time에 시간대가 필요하다",
+                      "field": "body.context.request_time"
+                    }
+                  },
+                  "missing_reader": {
+                    "summary": "reader_id 누락",
+                    "value": {
+                      "error": "Field required",
+                      "field": "body.reader_id"
+                    }
+                  },
+                  "duplicate": {
+                    "summary": "후보 중복",
+                    "value": {
+                      "error": "Value error, candidates에 중복이 있다",
+                      "field": "body.candidates"
+                    }
+                  },
+                  "top_k_range": {
+                    "summary": "top_k 범위 초과",
+                    "value": {
+                      "error": "top_k는 1 이상, candidates 개수 이하여야 한다",
+                      "field": "body.top_k"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "모델·피처 저장소를 쓸 수 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Unavailable"
+                },
+                "examples": {
+                  "not_ready": {
+                    "summary": "모델이나 Feast 정의를 못 읽음",
+                    "value": {
+                      "detail": "not ready"
+                    }
+                  },
+                  "failed": {
+                    "summary": "피처 조회나 예측 실패",
+                    "value": {
+                      "detail": "inference failed"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BadRequest": {
+        "properties": {
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "description": "틀린 이유"
+          },
+          "field": {
+            "type": "string",
+            "title": "Field",
+            "description": "틀린 필드(예: body.candidates)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error",
+          "field"
+        ],
+        "title": "BadRequest"
+      },
+      "Context": {
+        "properties": {
+          "request_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Request Time",
+            "description": "WAS가 피드 요청을 받은 시각. 시간대를 꼭 붙인다(예: +09:00, Z). 기사 나이·시간대 피처의 기준이다. 반환 기록의 served_at과 같은 값을 넣는다."
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device",
+            "description": "독자 기기: mobile, desktop, tablet 또는 null. 지금 모델은 쓰지 않으므로 생략해도 결과가 같다."
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_time"
+        ],
+        "title": "Context"
+      },
+      "RankRequest": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "description": "이번 피드 응답 번호. WAS가 만든 값을 그대로 돌려준다(로그 대조용). 반환 기록의 request_id와 같은 값을 넣는다."
+          },
+          "reader_id": {
+            "type": "string",
+            "title": "Reader Id",
+            "description": "익명 독자 ID(쿠키에서 검증한 reader_id). 독자 피처를 찾는 열쇠다."
+          },
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Candidates",
+            "description": "점수를 매길 article_id 목록(news_articles.id, news- 뒤 16진수 32자). 1~200개, 권장 20~30개. 추천 전에 보여 줄 순서대로 넣는다. 이 순서가 모델의 position(1부터) 피처가 된다. 중복 없이 넣는다."
+          },
+          "context": {
+            "$ref": "#/components/schemas/Context",
+            "description": "요청 시점의 정보"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K",
+            "description": "점수 상위 몇 개를 돌려받을지. 1 이상, candidates 개수 이하. 생략하거나 null이면 점수를 낸 후보를 모두 돌려준다. 순서만 바꾸려면 생략한다. 잘린 후보는 ranked·defaulted·unscored 어디에도 없다."
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "reader_id",
+          "candidates",
+          "context"
+        ],
+        "title": "RankRequest"
+      },
+      "RankResponse": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "description": "요청의 request_id 그대로"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version",
+            "description": "점수를 낸 모델 버전. 반환 기록의 model_version에 그대로 넣는다."
+          },
+          "features_as_of": {
+            "type": "string",
+            "title": "Features As Of",
+            "description": "피처 기준 시각. 지금은 임시로 request_time을 그대로 돌려준다. 실제 피처 시각이 될 때까지 DB에 저장하지 않는다(NULL)."
+          },
+          "ranked": {
+            "items": {
+              "$ref": "#/components/schemas/RankedItem"
+            },
+            "type": "array",
+            "title": "Ranked",
+            "description": "점수를 낸 기사. 이 배열 순서대로 화면에 보여 준다."
+          },
+          "defaulted": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonItem"
+            },
+            "type": "array",
+            "title": "Defaulted",
+            "description": "피처 일부가 없이 점수를 낸 기사. ranked에도 들어 있다. 오류가 아니며 순서를 바꿀 필요가 없다(기록용)."
+          },
+          "unscored": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonItem"
+            },
+            "type": "array",
+            "title": "Unscored",
+            "description": "점수를 내지 못한 기사. ranked에 없다. ranked 뒤에 붙인다(score는 NULL)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "model_version",
+          "features_as_of",
+          "ranked",
+          "defaulted",
+          "unscored"
+        ],
+        "title": "RankResponse"
+      },
+      "RankedItem": {
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "title": "Article Id",
+            "description": "요청한 candidates 중 하나"
+          },
+          "pctr": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pctr",
+            "description": "이 독자가 이 기사를 열 확률 예측값(0~1). 반환 기록의 score에 넣는다."
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Rank",
+            "description": "추천 순위. 1부터, pctr이 높은 순서"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_id",
+          "pctr",
+          "rank"
+        ],
+        "title": "RankedItem"
+      },
+      "ReasonItem": {
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "title": "Article Id",
+            "description": "요청한 candidates 중 하나"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "READER_FEATURES_NOT_FOUND",
+              "ARTICLE_FEATURES_NOT_FOUND",
+              "UNKNOWN_ARTICLE"
+            ],
+            "title": "Reason",
+            "description": "READER_FEATURES_NOT_FOUND(독자 피처 없음), ARTICLE_FEATURES_NOT_FOUND(기사 임베딩 없음), UNKNOWN_ARTICLE(article_id 형식이 틀림)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "article_id",
+          "reason"
+        ],
+        "title": "ReasonItem"
+      },
+      "Unavailable": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "enum": [
+              "not ready",
+              "inference failed"
+            ],
+            "title": "Detail",
+            "description": "고정 문구. 자세한 원인은 추론 서버 로그에만 남는다."
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "Unavailable"
+      }
+    }
+  }
+}
