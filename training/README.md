@@ -25,6 +25,10 @@ uv run --frozen --extra train python training/train_lgbm.py \
 
 `MLFLOW_TRACKING_URI`가 있으면 실험 기록과 모델 등록을 한다. `MODEL_NAME` 기본값은 `pctr`이고, 등록 뒤 같은 `valid`로 잰 AUC가 이전 champion보다 높을 때만 `champion` alias를 옮긴다. champion이 7일(`--champion-max-age-days`, 임시값)보다 오래되면 AUC 하락이 0.02(`--max-auc-drop`) 안일 때만 옮긴다. 새 모델 AUC가 0.55(`--min-auc`)보다 낮으면 첫 모델이어도 옮기지 않는다(상류 피처가 깨진 모델 차단).
 
+training set에 `simulated` 열이 없으면 등록만 하고 champion은 옮기지 않는다. `simulated` 열은 `training/build_training_set.py`가 실제 로그로 만들 때만 붙인다. 그래서 아래 예시처럼 `--training-set` 없이 로컬 가짜 로그로 학습한 모델은 champion이 되지 않는다.
+
+champion과 피처 열(이름·순서)이 다르면 champion을 오늘 `valid`로 평가할 수 없다. 이때는 비교를 건너뛰고 `--min-auc`만 확인해 새 모델을 champion으로 올린다. 피처를 바꿀 때는 학습 이미지 → 새 모델 champion 등록 → 추론 서버 이미지 순서로 배포한다. 추론 서버는 시작할 때 모델 피처 열이 `serving/matrix.py`와 다르면 뜨지 않는다.
+
 입력 행렬(열 순서·결측 채우기)은 `serving/matrix.py` 하나를 추론 서버와 같이 쓴다. 학습 이미지는 저장소 전체를 `/app`에 두므로 `serving/matrix.py`도 들어 있다.
 
 ```bash

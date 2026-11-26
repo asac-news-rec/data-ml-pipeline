@@ -9,6 +9,8 @@
 MLflow는 선택이다. MLFLOW_TRACKING_URI가 있으면 기록·등록하고, 이전 champion보다 낫거나
 champion이 오래됐는데 AUC 하락이 허용 폭 안일 때만 champion alias를 옮긴다.
 새 모델 AUC가 --min-auc보다 낮으면 어떤 경우에도 옮기지 않는다.
+training set에 simulated 열이 없으면(build_training_set.py가 만든 것이 아니면, 예: 로컬 가짜 로그)
+등록만 하고 champion은 옮기지 않는다.
 종료 코드: 0 = 끝(champion을 바꿨거나 MLflow 없음), 98 = champion 유지, 99 = 클릭 부족.
 98·99는 Airflow가 skipped로 보고 추론 서버 재시작을 건너뛴다.
 """
@@ -83,7 +85,7 @@ def should_promote(new: dict, old: dict | None, age_days: float, max_age_days: f
     champion이 max_age_days보다 오래됐어도 champion보다 max_auc_drop 넘게 낮으면 바꾸지 않는다.
     """
     auc = new["valid_auc"]
-    if auc < min_auc:
+    if not auc >= min_auc:   # NaN도 막는다
         return False, f"AUC {auc:.4f} < 최소 {min_auc}"
     if old is None:
         return True, "비교할 champion이 없다"
@@ -97,9 +99,17 @@ def should_promote(new: dict, old: dict | None, age_days: float, max_age_days: f
     return False, f"AUC {auc:.4f} <= champion {old['valid_auc']:.4f}, {age_days:.1f}일"
 
 
+def as_booster(loaded):
+    """sklearn 방식으로 등록한 모델은 predict가 0/1이라 안의 Booster를 쓴다(serving/model.py와 같다)."""
+    return getattr(loaded, "booster_", loaded)
+
+
 def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_days: float,
-               min_auc: float, max_auc_drop: float) -> bool:
-    """기록·등록하고 추론 서버가 새 모델을 읽어야 하면 True."""
+               min_auc: float, max_auc_drop: float, real_data: bool = True) -> bool:
+    """기록·등록하고 추론 서버가 새 모델을 읽어야 하면 True.
+
+    real_data가 False면(실제 로그로 만든 training set이 아니면) 등록만 하고 champion은 옮기지 않는다.
+    """
     uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not uri:
         print("MLFLOW_TRACKING_URI가 없어 파일만 저장했다")
@@ -112,7 +122,7 @@ def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_day
     mlflow.set_tracking_uri(uri)
     mlflow.set_experiment(os.environ.get("MLFLOW_EXPERIMENT", "pctr"))
     name, client = os.environ.get("MODEL_NAME", "pctr"), MlflowClient()
-    old, age_days = None, 0.0
+    old, age_days, note = None, 0.0, ""
     try:
         champion = client.get_model_version_by_alias(name, "champion")
     except MlflowException as exc:
@@ -121,10 +131,19 @@ def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_day
             raise
         champion = None
     if champion is not None:
-        loaded = mlflow.lightgbm.load_model(f"models:/{name}/{champion.version}")
-        old = evaluate(loaded, x_valid, y_valid)
-        age_days = (time.time() - champion.creation_timestamp / 1000) / 86400
+        loaded = as_booster(mlflow.lightgbm.load_model(f"models:/{name}/{champion.version}"))
+        if loaded.feature_name() != feature_names():
+            # 피처 열이 바뀌면 champion은 오늘 x_valid로 predict할 수 없다. 비교 없이 새 모델로 본다.
+            note = f"champion v{champion.version}과 피처 열이 달라 비교하지 않았다. "
+        else:
+            old = evaluate(loaded, x_valid, y_valid)
+            age_days = (time.time() - champion.creation_timestamp / 1000) / 86400
     promote, reason = should_promote(metrics, old, age_days, max_age_days, min_auc, max_auc_drop)
+    if note and old is None and promote:
+        reason = "피처 열이 바뀐 새 모델"
+    reason = note + reason
+    if not real_data:
+        promote, reason = False, "training set에 simulated 열이 없다(실제 로그 학습이 아니다). " + reason
 
     with mlflow.start_run():
         mlflow.log_params(params)
@@ -175,9 +194,12 @@ def main() -> None:
         print(f"클릭이 부족하다(각 {args.min_clicks}건 필요). 학습하지 않는다.")
         sys.exit(NOT_ENOUGH_CLICKS)
 
-    x = to_matrix(df)
     chosen = sample_negatives(y, np.flatnonzero(fit), args.seed)
     print(f"negative sampling 뒤 fit {len(chosen):,}행 (클릭 {int(y[chosen].sum()):,})")
+    # 1,545열 행렬은 쓰는 행(sampling된 fit + calib + valid)만 만든다. 버릴 negative까지 만들면 메모리가 몇 배다.
+    calib_idx, valid_idx = np.flatnonzero(calib), np.flatnonzero(valid)
+    x_fit, x_calib, x_valid = (to_matrix(df.iloc[i]) for i in (chosen, calib_idx, valid_idx))
+    y_fit, y_calib, y_valid = y[chosen], y[calib_idx], y[valid_idx]
 
     try:
         import lightgbm as lgb
@@ -195,12 +217,12 @@ def main() -> None:
         "min_data_in_leaf": args.min_data_in_leaf,
         "lambda_l2": 1.0,
         "seed": args.seed,
-        "num_threads": 0,
+        "num_threads": int(os.environ.get("OMP_NUM_THREADS", "0")),   # 0 = 노드 전체 코어
         "verbose": -1,
     }
     names = feature_names()
-    dtrain = lgb.Dataset(x[chosen], label=y[chosen], feature_name=names)
-    dcalib = lgb.Dataset(x[calib], label=y[calib], feature_name=names, reference=dtrain)
+    dtrain = lgb.Dataset(x_fit, label=y_fit, feature_name=names)
+    dcalib = lgb.Dataset(x_calib, label=y_calib, feature_name=names, reference=dtrain)
     model = lgb.train(
         params,
         dtrain,
@@ -210,8 +232,8 @@ def main() -> None:
                    lgb.log_evaluation(50)],
     )
 
-    final, a, b = calibrate(model, x[calib], y[calib])
-    metrics = evaluate(final, x[valid], y[valid])
+    final, a, b = calibrate(model, x_calib, y_calib)
+    metrics = evaluate(final, x_valid, y_valid)
     print(f"best_iteration {model.best_iteration}, calibration a={a:.4f} b={b:.4f}, "
           + ", ".join(f"{k} {v:.4f}" for k, v in metrics.items()))
 
@@ -222,8 +244,8 @@ def main() -> None:
                "negative_ratio": 1, "fit_rows": len(chosen), "calib_rows": counts["calib"][0],
                "valid_rows": counts["valid"][0],
                "simulated_rows": int(df["simulated"].sum()) if "simulated" in df else -1}
-    if not log_mlflow(final, params, metrics, x[valid], y[valid], args.champion_max_age_days,
-                      args.min_auc, args.max_auc_drop):
+    if not log_mlflow(final, params, metrics, x_valid, y_valid, args.champion_max_age_days,
+                      args.min_auc, args.max_auc_drop, real_data="simulated" in df):
         sys.exit(NOT_PROMOTED)
 
 

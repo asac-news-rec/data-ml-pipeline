@@ -104,6 +104,7 @@ with DAG(
             "TRAIN_END": "{{ data_interval_end.isoformat() }}",
             "TRAIN_DAYS": "{{ var.value.get('train_days', '14') }}",
             "TRAINING_SET": "/tmp/training_set.parquet",
+            "OMP_NUM_THREADS": "2",   # CPU limit 2와 맞춘다. 없으면 LightGBM이 노드 전체 코어 수만큼 스레드를 띄운다
             "TRAIN_INCLUDE_SIMULATOR": "{{ var.value.get('train_include_simulator', 'false') }}",
             "DATA_VALID_FROM": "{{ var.value.get('data_valid_from', '') }}",
             "CLEAN_BQ_DATASET": "{{ var.value.get('clean_bq_dataset', 'clean') }}",
