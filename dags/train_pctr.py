@@ -1,4 +1,4 @@
-"""[파이프라인 구간: 학습 → 서빙] 매시 PCTR 모델을 학습하고, champion이 바뀌면 추론 서버를 롤링 재시작하는 DAG.
+"""[파이프라인 구간: 학습 → 서빙] 매일 PCTR 모델을 학습하고, champion이 바뀌면 추론 서버를 롤링 재시작하는 DAG.
 
 train_pctr Pod 하나가 training set을 만들고 바로 학습한다(파일을 같은 Pod 안에서만 주고받는다).
 종료 코드 98(champion 유지)·99(클릭 부족)는 skipped가 되고 restart_inference_server도 건너뛴다.
@@ -68,9 +68,8 @@ def restart_inference_server(**context) -> None:
 with DAG(
     dag_id="train_pctr",
     start_date=datetime(2026, 11, 1),
-    # 매시 30분(멘토링 결정: 1시간마다 학습). 정각의 적재·피처 DAG가 끝난 뒤에 돈다.
-    # 학습이 1시간을 넘기면 max_active_runs=1이라 다음 실행은 앞 실행이 끝날 때까지 기다린다.
-    schedule=CronDataIntervalTimetable("30 * * * *", timezone="UTC"),
+    # 매일 02:30 KST. 정각의 적재 DAG들과 겹치지 않게 30분에 둔다.
+    schedule=CronDataIntervalTimetable("30 17 * * *", timezone="UTC"),
     catchup=False,
     max_active_runs=1,
     default_args={"retries": 1, "retry_delay": timedelta(minutes=10)},

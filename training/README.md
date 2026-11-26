@@ -33,9 +33,9 @@ MLFLOW_TRACKING_URI=http://mlflow.mlflow.svc.cluster.local:5000 \
 
 MLflow 서버는 클러스터 안에서만 접근된다. 로컬에서는 `MLFLOW_TRACKING_URI`를 비워 두면 모델 파일만 저장한다.
 
-## 매시 자동 학습 (`dags/train_pctr.py`)
+## 매일 자동 학습 (`dags/train_pctr.py`)
 
-매시 30분에 돈다(1시간마다 학습). 정각의 적재·피처 DAG가 끝난 뒤다. 사람이 하는 단계는 없다.
+매일 02:30 KST에 돈다. 사람이 하는 단계는 없다.
 
 1. `training/build_training_set.py`: `clean.served`·`clean.actions`로 label을 만들고 Feast offline에서 served 시점 피처를 붙인다.
    최근 14일, 마지막 24시간은 valid, 끝 3시간은 클릭이 도착하지 않았을 수 있어 뺀다(모두 임시값).
