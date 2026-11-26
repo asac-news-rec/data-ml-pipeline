@@ -16,6 +16,20 @@ class Window(unittest.TestCase):
         self.assertEqual((w["first_date"], w["last_date"], w["action_last_date"]),
                          (date(2026, 11, 11), date(2026, 11, 25), date(2026, 11, 26)))
 
+    def test_data_valid_from_moves_start_only_when_later(self):
+        end = datetime(2026, 11, 28, 17, 30, tzinfo=timezone.utc)
+        early = B.window(end, 14, 24, 3, datetime(2026, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual(early["start"], B.window(end, 14, 24, 3)["start"])
+        since = datetime(2026, 11, 26, 5, 0, tzinfo=timezone.utc)
+        w = B.window(end, 14, 24, 3, since)
+        self.assertEqual(w["start"], since)
+        self.assertFalse(w["short"])
+
+    def test_data_valid_from_after_valid_start_is_short(self):
+        end = datetime(2026, 11, 26, 17, 30, tzinfo=timezone.utc)      # valid는 11/25 14:30 UTC부터
+        w = B.window(end, 14, 24, 3, datetime(2026, 11, 26, 5, 0, tzinfo=timezone.utc))
+        self.assertTrue(w["short"])
+
     def test_bad_input(self):
         with self.assertRaises(ValueError):
             B.window(datetime(2026, 11, 25), 14, 24, 3)

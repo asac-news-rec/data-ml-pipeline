@@ -11,6 +11,8 @@ impression(clean.served) 1건 = 1행. label은 그 impression에 article_open이
   TRAIN_LABEL_WAIT_HOURS  클릭이 도착할 때까지 기다리는 시간. 이보다 최근 impression은 뺀다 (기본 3)
   CLEAN_BQ_DATASET      기본 clean
   TRAIN_INCLUDE_SIMULATOR  가상 독자(model_version='simulator') 로그를 넣을지. 기본 false = 뺀다
+  DATA_VALID_FROM       이 시각 이후 impression만 쓴다(시험 로그 빼기). build_feast_sources와 같은 Variable.
+                        비어 있으면 거르지 않는다. 예: 2026-11-26T14:00:00+09:00
   TRAINING_SET          출력 parquet (기본 features/feast/data/training_set.parquet)
   FEAST_FS_YAML, FEAST_REGISTRY_PATH, FEAST_BQ_TEMP_DATASET, VALKEY_HOST  Feast 설정
 """
@@ -42,8 +44,12 @@ ORDER BY s.served_at, s.reader_id, s.position, s.impression_id
 """
 
 
-def window(end: datetime, days: int, valid_hours: int, wait_hours: int) -> dict:
-    """served 범위 [start, stop), valid 시작, 파티션 날짜. 파티션은 KST와 UTC 어느 쪽 날짜여도 들어오게 잡는다."""
+def window(end: datetime, days: int, valid_hours: int, wait_hours: int, since: datetime | None = None) -> dict:
+    """served 범위 [start, stop), valid 시작, 파티션 날짜. 파티션은 KST와 UTC 어느 쪽 날짜여도 들어오게 잡는다.
+
+    since(DATA_VALID_FROM)가 start보다 늦으면 start를 since로 당긴다. 그러면 train 구간이 없을 수 있다
+    (start >= valid_from). 그때는 short=True로 돌려주고 호출하는 쪽이 학습을 건너뛴다.
+    """
     if end.utcoffset() is None:
         raise ValueError("TRAIN_END에 시간대가 없다")
     end = end.astimezone(timezone.utc)
@@ -52,9 +58,13 @@ def window(end: datetime, days: int, valid_hours: int, wait_hours: int) -> dict:
     valid_from = stop - timedelta(hours=valid_hours)
     if not start < valid_from < stop:
         raise ValueError("TRAIN_VALID_HOURS는 TRAIN_DAYS보다 짧고 0보다 커야 한다")
+    short = False
+    if since is not None and since > start:
+        start = since.astimezone(timezone.utc)
+        short = start >= valid_from
     return {"start": start, "stop": stop, "valid_from": valid_from, "action_end": end,
             "first_date": start.date(), "last_date": stop.astimezone(KST).date(),
-            "action_last_date": end.astimezone(KST).date()}
+            "action_last_date": end.astimezone(KST).date(), "short": short}
 
 
 def entity_frame(rows, valid_from: datetime):
@@ -79,8 +89,18 @@ def main() -> None:
     import build_training_set as feast_set
 
     project = os.environ["GCP_PROJECT_ID"]
+    sys.path.insert(0, str(ROOT / "transform"))
+    from build_feast_sources import valid_from as parse_valid_from   # Feast 원천 표와 같은 해석
+
+    since = parse_valid_from(os.environ.get("DATA_VALID_FROM"))
     w = window(datetime.fromisoformat(os.environ["TRAIN_END"]), int(os.environ.get("TRAIN_DAYS", "14")),
-               int(os.environ.get("TRAIN_VALID_HOURS", "24")), int(os.environ.get("TRAIN_LABEL_WAIT_HOURS", "3")))
+               int(os.environ.get("TRAIN_VALID_HOURS", "24")), int(os.environ.get("TRAIN_LABEL_WAIT_HOURS", "3")),
+               since)
+    print(f"로그 시작 시각(DATA_VALID_FROM): {since.isoformat()}")
+    if w["short"]:
+        print(f"DATA_VALID_FROM 이후로는 valid({w['valid_from']:%m-%d %H:%M} UTC부터) 앞의 train 구간이 없다. "
+              "학습하지 않는다.")
+        sys.exit(NOT_ENOUGH_CLICKS)
     include = os.environ.get("TRAIN_INCLUDE_SIMULATOR", "false").strip().lower() == "true"
     query = QUERY.format(clean=f"{project}.{os.environ.get('CLEAN_BQ_DATASET', 'clean')}")
     types = {"start": "TIMESTAMP", "stop": "TIMESTAMP", "action_end": "TIMESTAMP",

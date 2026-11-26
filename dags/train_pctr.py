@@ -7,7 +7,8 @@ train_pctr Pod 하나가 training set을 만들고 바로 학습한다(파일을
 
 Airflow Variables:
   train_work_image, gcp_project_id, feast_registry_path, feast_bq_temp_dataset, mlflow_tracking_uri (필수)
-  train_include_simulator(기본 false. 가상 독자 로그로도 학습할 때만 true), train_days(기본 14), clean_bq_dataset(기본 clean), valkey_host, inference_namespace(기본 inference),
+  train_include_simulator(기본 false. 가상 독자 로그로도 학습할 때만 true),
+  data_valid_from(선택. 이 시각 이후 로그만 학습·피처에 쓴다. build_feast_sources와 같은 값), train_days(기본 14), clean_bq_dataset(기본 clean), valkey_host, inference_namespace(기본 inference),
   inference_deployment(기본 inference-server)
 """
 import os
@@ -104,6 +105,7 @@ with DAG(
             "TRAIN_DAYS": "{{ var.value.get('train_days', '14') }}",
             "TRAINING_SET": "/tmp/training_set.parquet",
             "TRAIN_INCLUDE_SIMULATOR": "{{ var.value.get('train_include_simulator', 'false') }}",
+            "DATA_VALID_FROM": "{{ var.value.get('data_valid_from', '') }}",
             "CLEAN_BQ_DATASET": "{{ var.value.get('clean_bq_dataset', 'clean') }}",
             "FEAST_FS_YAML": "feature_store.gcp.yaml",
             "FEAST_REGISTRY_PATH": "{{ var.value.feast_registry_path }}",

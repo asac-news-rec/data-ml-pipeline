@@ -1,6 +1,7 @@
 -- [파이프라인 구간: 집계 → 피처] clean + feat 기사 표 → Feast 원천 표 4개.
 -- features/feast/prepare_sources.py의 article_table()·build()와 같은 결과를 BigQuery에서 만든다.
 -- {이름}은 transform/build_feast_sources.py가 표 경로로 바꾼다. 매번 전체를 다시 만든다(MVP).
+-- @data_valid_from: 이 시각 이후 행동만 쓴다(시험 로그 빼기). 값이 없으면 1970-01-01이라 전부 쓴다.
 --
 -- 사건: 독자별로 노출(impression마다 첫 exposure, kind 0)과 클릭(article_open, kind 1)을 시간순으로 본다.
 --       같은 시각이면 노출을 먼저 처리한다.
@@ -35,12 +36,12 @@ CREATE TEMP TABLE events AS
 WITH exposures AS (
   SELECT reader_id, article_id, MIN(event_time) AS t, 0 AS kind, impression_id AS tie
   FROM `{clean_actions}`
-  WHERE event_type = 'exposure'
+  WHERE event_type = 'exposure' AND event_time >= @data_valid_from
   GROUP BY reader_id, article_id, impression_id
 ), clicks AS (
   SELECT reader_id, article_id, event_time AS t, 1 AS kind, event_id AS tie
   FROM `{clean_actions}`
-  WHERE event_type = 'article_open'
+  WHERE event_type = 'article_open' AND event_time >= @data_valid_from
 )
 SELECT *, ROW_NUMBER() OVER (PARTITION BY reader_id ORDER BY t, kind, tie) AS seq
 FROM (SELECT * FROM exposures UNION ALL SELECT * FROM clicks);
