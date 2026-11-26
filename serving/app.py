@@ -108,8 +108,11 @@ async def lifespan(app: FastAPI):
         model.load()
         app.state.model = model
         app.state.ready = True
-    except Exception:  # readyz와 rank가 503으로 알린다. 원인은 로그에만 남긴다.
+    except Exception:
+        # 503만 내며 살아 있으면 /healthz가 200이라 쿠버네티스가 재시작하지 않는다.
+        # 프로세스를 끝내 재시작에 맡긴다. 원인은 로그에만 남긴다.
         logger.exception("추론 서버 준비 실패")
+        raise
     yield
 
 
@@ -175,7 +178,9 @@ def healthz() -> dict:
 
 @app.get("/readyz", responses=UNAVAILABLE, summary="요청을 받을 준비 확인(쿠버네티스용)")
 def readyz() -> dict:
-    """시작할 때 모델과 Feast 정의를 읽었으면 200, 못 읽었으면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.
+    """시작할 때 모델과 Feast 정의를 읽었으면 200, 읽기 전이면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.
+
+    읽기에 실패하면 프로세스가 끝나고 쿠버네티스가 다시 띄운다.
 
     Valkey 접속은 확인하지 않는다. Valkey 장애는 /v1/rank의 503으로 드러난다.
     """
