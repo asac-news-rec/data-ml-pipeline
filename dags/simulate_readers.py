@@ -8,8 +8,9 @@
 
 가짜 표시는 clean.served.model_version='simulator', clean.actions.source='simulator'까지 남는다.
 가상 독자 reader_id는 uuid5(SIM_NAMESPACE, ...)라 실제 독자와 겹치지 않고, Feast 피처는 모두
-reader_id별로 계산하므로 실제 독자 피처 값은 바뀌지 않는다. 학습 입력은 training/build_training_set.py가
-model_version='simulator' 행을 기본으로 뺀다(train_include_simulator=true일 때만 넣는다).
+reader_id별로 계산하므로 실제 독자 피처 값은 바뀌지 않는다.
+[계획] 학습 입력에서 model_version='simulator' 행을 기본으로 빼는 조건은 #53의
+training/build_training_set.py에 있다. 켜는 조건: #53이 main에 머지된 뒤에만 true로 둔다.
 
 실제 독자 로그가 생기면 Variable `simulate_readers_enabled`를 false로 두고, 이후 DAG를 지운다.
 

@@ -214,6 +214,10 @@ class SeparationTest(unittest.TestCase):
         windows = re.findall(r"PARTITION BY\s+(?:\w+\.)?(\w+)", sql)
         self.assertGreater(len(windows), 5)
         self.assertEqual(set(windows), {"reader_id"})
+        # 기사별 인기도처럼 독자를 묶지 않는 집계가 생기면 가상 클릭이 실제 독자 점수에 들어간다
+        groups = re.findall(r"GROUP BY\s+(?:\w+\.)?(\w+)", sql)
+        self.assertTrue(groups)
+        self.assertEqual(set(groups), {"reader_id"}, "reader_id로 묶지 않는 GROUP BY가 생겼다")
 
     def test_dag_is_off_by_default(self):
         """Variable이 없으면 쓰지 않는다. 켤 때만 simulate_readers_enabled=true."""
