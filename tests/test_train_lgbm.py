@@ -48,7 +48,31 @@ class Train(unittest.TestCase):
         self.assertTrue(T.should_promote(bad, None, 0, 7)[0])
         self.assertTrue(T.should_promote(good, bad, 0, 7)[0])
         self.assertFalse(T.should_promote(bad, good, 6.9, 7)[0])
-        self.assertTrue(T.should_promote(bad, good, 7, 7)[0])
+        self.assertTrue(T.should_promote(bad, good, 7, 7, max_auc_drop=0.15)[0])
+
+    def test_stale_champion_is_not_replaced_by_much_worse_model(self):
+        champion, slight, broken = {"valid_auc": 0.72}, {"valid_auc": 0.71}, {"valid_auc": 0.60}
+        self.assertTrue(T.should_promote(slight, champion, 8, 7)[0])      # 하락 0.01 <= 0.02
+        self.assertFalse(T.should_promote(broken, champion, 8, 7)[0])     # 하락 0.12: 기한이 지나도 유지
+        self.assertFalse(T.should_promote(broken, champion, 30, 7)[0])
+
+    def test_min_auc_blocks_every_case(self):
+        random_like = {"valid_auc": 0.52}
+        self.assertFalse(T.should_promote(random_like, None, 0, 7)[0])           # 첫 모델도 막는다
+        self.assertFalse(T.should_promote(random_like, {"valid_auc": 0.50}, 0, 7)[0])
+        self.assertFalse(T.should_promote(random_like, {"valid_auc": 0.53}, 30, 7)[0])
+
+    def test_matrix_is_shared_with_serving(self):
+        """학습과 추론 서버가 같은 입력 행렬 함수를 쓴다(복사본이 생기면 실패)."""
+        from serving import matrix
+        self.assertIs(T.to_matrix, matrix.to_matrix)
+        self.assertIs(T.feature_names, matrix.feature_names)
+        try:
+            from serving import features
+        except ImportError:
+            return
+        self.assertIs(features.to_matrix, matrix.to_matrix)
+        self.assertIs(features.feature_names, matrix.feature_names)
 
 
 if __name__ == "__main__":
