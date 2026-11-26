@@ -42,38 +42,38 @@ class Context(BaseModel):
 
 
 class RecommendRequest(BaseModel):
-    reader_id: str = Field(min_length=1, description=(
+    reader_id: str = Field(title="독자 ID", min_length=1, description=(
         "독자 ID. WAS가 news_reader 쿠키에서 검증한 reader_id(UUID7 문자열)를 그대로 넣는다. "
         "이 값으로 독자 피처를 찾는다. 처음 보는 독자도 200을 돌려준다."))
-    category: str | None = Field(default=None, min_length=1, description=(
+    category: str | None = Field(title="대분류", default=None, min_length=1, description=(
         "대분류. 독자가 화면에서 고른 값을 그대로 넣는다(CAT001 category_list의 값, 예: 정치). "
         "\"전체\"면 생략하거나 null. 이 대분류 기사만 추천한다."))
-    subcategory: str | None = Field(default=None, min_length=1, description=(
+    subcategory: str | None = Field(title="소분류", default=None, min_length=1, description=(
         "소분류. 독자가 고른 값을 그대로 넣는다(CAT002 sub_category_list의 값, 예: 북한). "
         "\"전체\"면 생략하거나 null. category와 같이 오면 둘 다 맞는 기사만 추천한다."))
-    size: int = Field(default=20, ge=1, le=50, description="이번에 받을 기사 수. 1~50, 기본 20.")
-    cursor: str | None = Field(default=None, min_length=1, description=(
+    size: int = Field(title="받을 개수", default=20, ge=1, le=50, description="이번에 받을 기사 수. 1~50, 기본 20.")
+    cursor: str | None = Field(title="다음 페이지 위치", default=None, min_length=1, description=(
         "다음 페이지 위치. 첫 조회는 생략하거나 null. 다음 조회는 직전 응답의 next_cursor를 그대로 넣는다. "
         "WAS는 값을 해석하거나 바꾸지 않는다. 첫 조회와 같은 reader_id·category·subcategory로 보내야 한다."))
-    request_id: str | None = Field(default=None, description=(
+    request_id: str | None = Field(title="피드 요청 ID", default=None, description=(
         "선택. WAS의 피드 request_id. 넣으면 추천 서버 로그에 남아 반환 기록과 대조할 수 있다. 결과에는 영향이 없다."))
 
 
 class RecommendItem(BaseModel):
-    article_id: str = Field(description="기사 ID(news_articles.id). WAS는 이 ID로 기사 정보를 DB에서 가져온다.")
-    score: float = Field(ge=0, le=1, description=(
+    article_id: str = Field(title="기사 ID", description="기사 ID(news_articles.id). WAS는 이 ID로 기사 정보를 DB에서 가져온다.")
+    score: float = Field(title="추천 점수", ge=0, le=1, description=(
         "이 독자가 이 기사를 열 확률 예측값(0~1). 반환 기록(news_impressions)의 score에 그대로 저장한다."))
-    position: int = Field(ge=1, description=(
+    position: int = Field(title="누적 추천 순서", ge=1, description=(
         "누적 추천 순서. 첫 페이지는 1부터, 다음 페이지는 이어서 21, 22 …. "
         "반환 기록의 position에 그대로 쓸 수 있다. items 배열은 이 순서대로 정렬돼 있다."))
 
 
 class RecommendResponse(BaseModel):
-    model_version: str = Field(description=(
+    model_version: str = Field(title="모델 버전", description=(
         "점수를 낸 모델 버전. 반환 기록의 model_version에 그대로 저장한다. 다음 페이지도 첫 조회와 같은 값이다."))
-    items: list[RecommendItem] = Field(description=(
+    items: list[RecommendItem] = Field(title="추천 기사 목록", description=(
         "추천 순서대로 정렬한 기사. 최대 size개. 조건에 맞는 기사가 없으면 빈 배열. 이 순서대로 화면에 보여 준다."))
-    next_cursor: str | None = Field(description=(
+    next_cursor: str | None = Field(title="다음 페이지 위치", description=(
         "다음 페이지 위치. 다음 조회 때 cursor에 그대로 넣는다. 더 줄 기사가 없으면 null."))
 
 
@@ -157,17 +157,40 @@ async def lifespan(app: FastAPI):
 
 
 DESCRIPTION = """뉴스 WAS가 추천순 피드를 만들 때 부르는 API. WAS는 `POST /v1/recommend` 하나만 부른다.
+상태 확인 API(`/healthz`, `/readyz`)는 쿠버네티스가 부르므로 이 명세에 넣지 않았다.
 
-- 첫 조회: 프런트가 추천순·분류 조건으로 피드를 요청 → WAS가 `reader_id`·`category`·`subcategory`·`size`(20)로 호출
-  → 받은 `items` 순서대로 기사 정보를 DB에서 가져와 응답을 만들고 반환 기록을 저장 → `next_cursor`를 프런트에 전달
-- 다음 조회: 프런트가 받은 커서로 요청 → WAS가 같은 `reader_id`·`category`·`subcategory`와 `cursor`로 호출
-- 분류 조건을 바꾸거나 새로고침하면 `cursor` 없이 첫 조회부터 다시 부른다.
-- 후보 선정(지금은 해당 분류의 최신 기사 200개), 점수 계산, 정렬, 페이지 나누기, 페이지 간 중복·누락 방지는 추천 서버가 한다.
-- 정렬 결과는 30분 동안 유지된다. 30분이 지난 커서는 400(`field`: `body.cursor`)이고, 첫 조회부터 다시 부른다.
-- 실패하면 503이다. 다른 정렬로 대체할지는 WAS가 정한다.
-- 인증 없음. VPC 내부 주소로만 부른다. 응답 시간 목표 P99 200ms.
+| 항목 | 값 |
+|---|---|
+| 기본 주소 | `http://10.10.0.220:8080` (GKE 내부 부하 분산기, VPC 안에서만. news-feed Cloud Run의 Direct VPC egress로 부른다) |
+| 인증 | 없음(VPC 내부 전용) |
+| Content-Type | `application/json`, 요청 본문 필수 |
+| 응답 시간 목표 | P99 200ms (로컬 후보 200개 기준 p50 약 70ms. 클러스터는 배포 뒤 측정) |
+| 상태 | 초안(합의 전). 아직 클러스터에 배포되지 않았다 |
+
+처리 규칙
+- 후보 선정, 점수 계산, 정렬, 페이지 나누기, 페이지 간 중복·누락 방지는 추천 서버가 한다. WAS는 후보를 고르지 않는다.
+- 후보: 해당 분류에서 최근 7일 안에 발행된 최신 기사 200개. 후보 목록은 매시 갱신되고 추천 서버는 5분마다 다시 읽는다.
+- 첫 조회 때 정렬한 목록을 30분 보관한다. 다음 페이지는 그 목록에서 이어서 꺼내므로 새 기사가 들어와도 중복·누락이 없다.
+- 최신순·조회수순·좋아요순은 WAS가 DB에서 직접 조회한다. 이 API는 추천순에만 쓴다.
+
+연결 메모
+1. 첫 조회: 프런트 → WAS(추천순·분류 조건) → WAS가 `reader_id`·`category`·`subcategory`·`size`(20)로 호출
+2. 받은 `items` 순서대로 기사 정보를 DB에서 가져와 응답을 만들고, 반환 기록에 `score`·`model_version`·`position`을 저장한 뒤 `next_cursor`와 함께 프런트에 응답
+3. 다음 조회: 프런트가 받은 `next_cursor`를 보내면 WAS가 같은 `reader_id`·`category`·`subcategory`와 `cursor`로 호출
+4. `next_cursor`가 null이면 더 줄 기사가 없다.
+5. 분류 조건을 바꾸거나 새로고침하면 `cursor` 없이 첫 조회부터 부른다.
+
+오류 처리
+| HTTP 상태 | 뜻 | WAS 처리 |
+|---|---|---|
+| 400, `field`가 `body.cursor` | 커서가 30분 지났거나, 첫 조회와 다른 reader_id·분류로 보냈거나, 값이 깨짐 | `cursor` 없이 첫 조회부터 다시 부른다 |
+| 400, 그 밖의 `field` | 필드가 없거나 범위 밖(코드 버그) | 오류 로그를 남긴다 |
+| 503 `not ready` | 모델을 아직 못 읽음 | 추천 결과 없이 처리(WAS가 정함) |
+| 503 `inference failed` | 피처 조회·점수 계산 실패 | 추천 결과 없이 처리(WAS가 정함) |
+| 시간 초과·연결 실패 | | 503과 같이 처리 |
 """
-app = FastAPI(title="news-rec inference", version="1.0.0", description=DESCRIPTION, lifespan=lifespan)
+app = FastAPI(title="뉴스 추천 API", version="1.0.0", description=DESCRIPTION, lifespan=lifespan,
+              servers=[{"url": "http://10.10.0.220:8080", "description": "GKE 내부(VPC 안에서만)"}])
 
 
 def documented(model, description: str, values: dict) -> dict:
@@ -180,7 +203,8 @@ UNAVAILABLE = {503: documented(Unavailable, "모델·피처 저장소를 쓸 수
 def openapi() -> dict:
     """검증 오류를 400으로 돌려주므로 FastAPI가 자동으로 넣는 422를 명세에서 뺀다."""
     if not app.openapi_schema:
-        schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+        schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes,
+                             servers=app.servers)
         for path in schema["paths"].values():
             for operation in path.values():
                 operation["responses"].pop("422", None)
