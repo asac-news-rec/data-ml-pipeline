@@ -15,7 +15,7 @@ try:
 except ImportError as exc:
     raise unittest.SkipTest(f"serving 묶음이 없다: {exc}")
 
-from transform.export_candidates import to_payload
+from transform.export_candidates import candidates_path, to_payload
 
 # 45개: 정치 30(북한 10), 경제 15. published_at이 클수록 최신이다.
 ARTICLES = [{"article_id": f"news-{i:032x}", "category": "정치" if i < 30 else "경제",
@@ -98,8 +98,8 @@ class Recommend(unittest.TestCase):
         A.app.state.lists = R.MemoryLists()
         self.fetched = []
 
-        def fetch(store, reader_id, candidates, request_time):
-            self.fetched.append((reader_id, candidates, request_time))
+        def fetch(store, reader_id, candidates, request_time, positions=None):
+            self.fetched.append((reader_id, candidates, request_time, positions))
             return candidates
         self.patches = [patch.object(A, "fetch_online", side_effect=fetch),
                         patch.object(A, "to_matrix", side_effect=lambda ids: ids)]
@@ -126,6 +126,24 @@ class Recommend(unittest.TestCase):
         self.assertEqual(len(set(ids)), 30)
         self.assertEqual(len(self.fetched), 1)          # 다음 페이지는 점수를 다시 매기지 않는다
         self.assertEqual(self.fetched[0][2].tzinfo, timezone.utc)
+
+    def test_score_does_not_depend_on_candidate_order(self):
+        """후보 순서가 바뀌어도 같은 기사는 같은 점수다. position 피처는 모두 SCORE_POSITION이다."""
+        def fetch(store, reader_id, candidates, request_time, positions=None):
+            self.fetched.append(positions)
+            return list(zip(candidates, positions))
+        # 진짜 모델처럼 position이 점수에 들어간다: 0.01 + 기사 번호/100 - position/100000
+        A.app.state.model.predict.side_effect = lambda rows: np.array(
+            [0.01 + int(a[5:], 16) / 100 - p / 100000 for a, p in rows])
+        result = []
+        with patch.object(A, "fetch_online", side_effect=fetch):
+            for articles in (ARTICLES, ARTICLES[::-1]):
+                A.app.state.pool = pool(articles)
+                A.app.state.lists = R.MemoryLists()
+                items = self.call(category="정치", size=30).items
+                result.append({i.article_id: i.score for i in items})
+        self.assertEqual(result[0], result[1])
+        self.assertEqual(set(self.fetched[0]), {A.SCORE_POSITION})
 
     def test_size_20_returns_20_and_next_starts_after_last_returned(self):
         """후보 45개, size=20: 20 → 20 → 5개. 커서는 실제로 돌려준 마지막 기사 다음에서 이어진다."""
@@ -188,6 +206,22 @@ class Recommend(unittest.TestCase):
 
 
 class Export(unittest.TestCase):
+    def test_path_is_next_to_registry_with_any_name(self):
+        """registry 이름이 registry.pb가 아니어도 registry를 덮어쓰지 않고, 추천 서버와 같은 경로를 쓴다."""
+        for registry in ("gs://b/feast/registry.pb", "gs://b/feast/prod_registry.db", "gs://b/feast/registry"):
+            env = {"FEAST_REGISTRY_PATH": registry}
+            path = candidates_path(env)
+            self.assertEqual(path, "gs://b/feast/candidates.json")
+            self.assertNotEqual(path, registry)
+            with patch.dict("os.environ", env, clear=True):
+                self.assertEqual(path, R.default_path())
+
+    def test_path_equal_to_registry_stops(self):
+        env = {"FEAST_REGISTRY_PATH": "gs://b/feast/registry.pb", "CANDIDATES_PATH": "gs://b/feast/registry.pb"}
+        with self.assertRaises(SystemExit):
+            candidates_path(env)
+
+
     def test_payload_is_utc(self):
         kst = datetime.fromisoformat("2026-11-26T09:00:00+09:00")
         out = to_payload([{"article_id": "news-1", "category": "정치", "subcategory": None, "published_at": kst}], kst)

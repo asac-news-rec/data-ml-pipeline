@@ -1,31 +1,14 @@
-"""Feast online feature 조회와 LightGBM 입력 행렬 조립."""
+"""Feast online feature 조회. 입력 행렬 조립은 serving/matrix.py에 있다."""
 import re
 
 import numpy as np
 import pandas as pd
 from feast import FeatureStore
 
-HEAD = ["position", "article_age_h", "category", "hour", "hist_clicks", "hist_exposures",
-        "hours_since_last_click", "already_opened", "already_seen"]
-FILL_ZERO = ["hist_clicks", "hist_exposures", "already_opened", "already_seen"]
-DIM = 768
+from .matrix import DIM, FILL_ZERO, HEAD, feature_names, is_missing, to_matrix  # noqa: F401  (다른 모듈이 여기서 가져간다)
+
 SERVICE = "ctr_lgbm_v1"
 ARTICLE_ID = re.compile(r"^news-[0-9a-f]{32}$")
-
-
-def feature_names() -> list[str]:
-    return HEAD + [f"u_emb_{i}" for i in range(DIM)] + [f"a_emb_{i}" for i in range(DIM)]
-
-
-def is_missing(value) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, float) and np.isnan(value):
-        return True
-    try:
-        return len(value) == 0
-    except TypeError:
-        return False
 
 
 def fetch_online(store: FeatureStore, reader_id: str, candidates: list[str], request_time,
@@ -43,21 +26,6 @@ def fetch_online(store: FeatureStore, reader_id: str, candidates: list[str], req
     ).to_df()
     online["position"] = [row["position"] for row in rows]
     return online
-
-
-def to_matrix(df: pd.DataFrame) -> np.ndarray:
-    """일반 9 + u_emb 768 + a_emb 768. cold 임베딩은 NaN으로 둔다."""
-    head = df[HEAD].astype("float64").copy()
-    head[FILL_ZERO] = head[FILL_ZERO].fillna(0)
-
-    def stack(col: str) -> np.ndarray:
-        nan = np.full(DIM, np.nan, dtype=np.float32)
-        return np.vstack([
-            np.asarray(value, dtype=np.float32) if not is_missing(value) else nan
-            for value in df[col]
-        ])
-
-    return np.hstack([head.to_numpy(np.float32), stack("u_emb"), stack("a_emb")])
 
 
 def missing_flags(online: pd.DataFrame) -> tuple[bool, list[bool]]:

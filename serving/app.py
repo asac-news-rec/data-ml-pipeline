@@ -22,6 +22,9 @@ from .recommend import (CandidatePool, CursorError, decode_cursor, load_ranking,
                         save_ranking)
 
 ROOT = Path(__file__).resolve().parents[1]
+# /v1/recommend가 점수를 낼 때 모든 후보에 넣는 position 피처 값. 응답·반환 기록의 position은 정렬 뒤 순번이다.
+# 후보 순서(최신순)가 점수에 섞이지 않고, 점수는 "1번 자리에 보였을 때의 클릭 확률"로 읽는다.
+SCORE_POSITION = 1
 logger = logging.getLogger("uvicorn.error")
 Reason = Literal["READER_FEATURES_NOT_FOUND", "ARTICLE_FEATURES_NOT_FOUND", "UNKNOWN_ARTICLE"]
 
@@ -155,8 +158,11 @@ async def lifespan(app: FastAPI):
         model.load()
         app.state.model = model
         app.state.ready = True
-    except Exception:  # readyz와 rank가 503으로 알린다. 원인은 로그에만 남긴다.
+    except Exception:
+        # 503만 내며 살아 있으면 /healthz가 200이라 쿠버네티스가 재시작하지 않는다.
+        # 프로세스를 끝내 재시작에 맡긴다. 원인은 로그에만 남긴다.
         logger.exception("추론 서버 준비 실패")
+        raise
     yield
 
 
@@ -173,6 +179,7 @@ DESCRIPTION = """뉴스 WAS가 추천순 피드를 만들 때 부르는 API. WAS
 
 처리 규칙
 - 후보 선정, 점수 계산, 정렬, 페이지 나누기, 페이지 간 중복·누락 방지는 추천 서버가 한다. WAS는 후보를 고르지 않는다.
+- 점수(`score`): 모든 후보가 1번 자리에 보였다고 보고 계산한 클릭 확률. 응답의 `position`은 점수로 정렬한 뒤의 순번이다.
 - 후보: 해당 분류에서 최근 7일 안에 발행된 최신 기사 200개. 후보 목록은 매시 갱신되고 추천 서버는 5분마다 다시 읽는다.
 - 첫 조회 때 정렬한 목록을 30분 보관한다. 다음 페이지는 그 목록에서 이어서 꺼내므로 새 기사가 들어와도 중복·누락이 없다.
 - 최신순·조회수순·좋아요순은 WAS가 DB에서 직접 조회한다. 이 API는 추천순에만 쓴다.
@@ -236,7 +243,9 @@ def healthz() -> dict:
 
 @app.get("/readyz", include_in_schema=False, responses=UNAVAILABLE, summary="요청을 받을 준비 확인(쿠버네티스용)")
 def readyz() -> dict:
-    """시작할 때 모델과 Feast 정의를 읽었으면 200, 못 읽었으면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.
+    """시작할 때 모델과 Feast 정의를 읽었으면 200, 읽기 전이면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.
+
+    읽기에 실패하면 프로세스가 끝나고 쿠버네티스가 다시 띄운다.
 
     Valkey 접속은 확인하지 않는다. Valkey 장애는 /v1/rank의 503으로 드러난다.
     """
@@ -283,7 +292,9 @@ def recommend(request: RecommendRequest = Body(openapi_examples=examples.RECOMME
         candidates = app.state.pool.pick(request.category, request.subcategory)
         ranked: list[tuple[str, float]] = []
         if candidates:
-            online = fetch_online(app.state.store, request.reader_id, candidates, datetime.now(timezone.utc))
+            # 후보 순서(최신순)가 점수에 들어가지 않게 모두 같은 위치(SCORE_POSITION)에 보였다고 보고 점수를 낸다.
+            online = fetch_online(app.state.store, request.reader_id, candidates, datetime.now(timezone.utc),
+                                  positions=[SCORE_POSITION] * len(candidates))
             scores = check_scores(app.state.model.predict(to_matrix(online)), len(candidates))
             # 점수가 같으면 후보 순서(최신순)를 지킨다
             order = sorted(range(len(candidates)), key=lambda i: -scores[i])

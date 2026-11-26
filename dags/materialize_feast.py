@@ -138,7 +138,8 @@ with DAG(
         ),
         env_vars={
             "GCP_PROJECT_ID": "{{ var.value.gcp_project_id }}",
-            "CANDIDATES_PATH": "{{ var.value.feast_registry_path | replace('registry.pb', 'candidates.json') }}",
+            # 경로는 export_candidates.py가 registry 부모 폴더에서 만든다(추천 서버와 같은 규칙).
+            "FEAST_REGISTRY_PATH": "{{ var.value.feast_registry_path }}",
         },
         get_logs=True,
         on_finish_action="delete_pod",

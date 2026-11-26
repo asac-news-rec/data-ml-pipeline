@@ -17,12 +17,16 @@ GCP(Valkey online store + MLflow 모델):
 
 ```bash
 FEAST_FS_YAML=feature_store.gcp.yaml \
+GCP_PROJECT_ID=final-project-513508 \
+FEAST_BQ_TEMP_DATASET=dev_yoonmo \
 FEAST_REGISTRY_PATH=gs://final-project-513508-model-artifacts/feast/registry.pb \
 VALKEY_HOST=valkey.valkey.svc.cluster.local \
 MLFLOW_TRACKING_URI=http://mlflow.mlflow.svc.cluster.local:5000 \
 MODEL_URI=models:/pctr@champion \
 uv run --frozen --extra serving uvicorn serving.app:app --host 0.0.0.0 --port 8080
 ```
+
+`GCP_PROJECT_ID`·`FEAST_BQ_TEMP_DATASET`은 `feature_store.gcp.yaml`의 offline store 설정이 읽는다. 서빙은 offline store를 쓰지 않지만 값이 없으면 설정을 읽지 못한다.
 
 MLflow 서버가 아직 없으면 `MLFLOW_TRACKING_URI`·`MODEL_URI` 대신 GCS 파일을 읽는다(임시):
 
@@ -86,4 +90,4 @@ curl -X POST localhost:8080/v1/rank -H 'content-type: application/json' -d '{
 - `features_as_of`는 온라인 store의 피처 기준 시각을 읽을 수 있게 되면 바꾼다. 지금은 `request_time`으로 둔다.
 - `context.device`는 현재 피처에 없어서 받기만 하고 쓰지 않는다. `/v1/recommend`에는 없다.
 - OpenAPI에는 WAS가 부르는 `/v1/recommend`만 나온다. `/healthz`·`/readyz`·`/v1/model`·`/v1/rank`는 운영·확인용이라 숨겼다.
-- 모델 로드와 store 연결이 안 되면 `/readyz`와 `/v1/rank`가 503을 돌려준다.
+- 시작할 때 모델이나 Feast 정의를 못 읽으면 프로세스가 끝난다. 쿠버네티스가 다시 띄우므로 MLflow·GCS가 잠깐 안 돼도 손으로 Pod를 지우지 않아도 된다.
