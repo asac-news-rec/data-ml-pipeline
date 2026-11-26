@@ -30,7 +30,7 @@
     "/readyz": {
       "get": {
         "summary": "요청을 받을 준비 확인(쿠버네티스용)",
-        "description": "시작할 때 모델과 Feast 정의를 읽었으면 200, 못 읽었으면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.\n\nValkey 접속은 확인하지 않는다. Valkey 장애는 /v1/rank의 503으로 드러난다.",
+        "description": "시작할 때 모델과 Feast 정의를 읽었으면 200, 읽기 전이면 503. 쿠버네티스 readiness가 부르고 WAS는 부르지 않는다.\n\n읽기에 실패하면 프로세스가 끝나고 쿠버네티스가 다시 띄운다.\n\nValkey 접속은 확인하지 않는다. Valkey 장애는 /v1/rank의 503으로 드러난다.",
         "operationId": "readyz_readyz_get",
         "responses": {
           "200": {

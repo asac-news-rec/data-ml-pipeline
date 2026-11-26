@@ -44,15 +44,17 @@ class RankApi(unittest.TestCase):
         self.assertEqual((caught.exception.status_code, caught.exception.detail), (503, "inference failed"))
         self.assertIn("valkey.secret", "".join(logs.output))
 
-    def test_startup_failure_is_fixed_message(self):
+    def test_startup_failure_exits(self):
         async def start():
             async with A.lifespan(A.app):
-                with self.assertRaises(HTTPException) as caught:
-                    A.readyz()
-                self.assertEqual(caught.exception.detail, "not ready")
+                pass
         with patch.object(A, "load_store", side_effect=RuntimeError("gs://secret")), \
-                self.assertLogs("uvicorn.error", "ERROR"):
+                self.assertLogs("uvicorn.error", "ERROR"), self.assertRaises(RuntimeError):
             asyncio.run(start())
+        A.app.state.ready = False
+        with self.assertRaises(HTTPException) as caught:
+            A.readyz()
+        self.assertEqual(caught.exception.detail, "not ready")
 
     def test_rank_order_and_defaulted(self):
         online = pd.DataFrame({"u_emb": [None] * 3, "a_emb": [[0.0] * 768, [0.0] * 768, None]})
