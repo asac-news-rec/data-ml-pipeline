@@ -7,7 +7,8 @@
 순서: train을 시간순으로 fit/calib으로 나눈다 → fit의 negative를 1:1로 줄여 학습한다
 → 줄이지 않은 calib으로 확률을 보정한다 → 줄이지 않은 valid로 평가한다.
 MLflow는 선택이다. MLFLOW_TRACKING_URI가 있으면 기록·등록하고, 이전 champion보다 낫거나
-champion이 오래됐을 때만 champion alias를 옮긴다.
+champion이 오래됐는데 AUC 하락이 허용 폭 안일 때만 champion alias를 옮긴다.
+새 모델 AUC가 --min-auc보다 낮으면 어떤 경우에도 옮기지 않는다.
 종료 코드: 0 = 끝(champion을 바꿨거나 MLflow 없음), 98 = champion 유지, 99 = 클릭 부족.
 98·99는 Airflow가 skipped로 보고 추론 서버 재시작을 건너뛴다.
 """
@@ -22,34 +23,9 @@ import pandas as pd
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-HEAD = ["position", "article_age_h", "category", "hour", "hist_clicks", "hist_exposures",
-        "hours_since_last_click", "already_opened", "already_seen"]
-FILL_ZERO = ["hist_clicks", "hist_exposures", "already_opened", "already_seen"]
-DIM = 768
+sys.path.insert(0, str(ROOT))   # 학습 이미지는 저장소 전체를 /app에 둔다
+from serving.matrix import feature_names, to_matrix  # noqa: E402  (추론 서버와 같은 입력 행렬)
 NOT_PROMOTED, NOT_ENOUGH_CLICKS = 98, 99   # dags/train_pctr.py의 skip_on_exit_code와 같아야 한다
-
-
-def is_missing(value) -> bool:
-    return value is None or (isinstance(value, float) and np.isnan(value)) or len(value) == 0
-
-
-def to_matrix(df: pd.DataFrame) -> np.ndarray:
-    """Feast 결과 → 일반 9 + u_emb 768 + a_emb 768 (cold u_emb = NaN)."""
-    head = df[HEAD].astype("float64").copy()
-    head[FILL_ZERO] = head[FILL_ZERO].fillna(0)
-
-    def stack(col: str) -> np.ndarray:
-        nan = np.full(DIM, np.nan, dtype=np.float32)
-        return np.vstack([
-            nan if is_missing(value) else np.asarray(value, dtype=np.float32)
-            for value in df[col]
-        ])
-
-    return np.hstack([head.to_numpy(np.float32), stack("u_emb"), stack("a_emb")])
-
-
-def feature_names() -> list[str]:
-    return HEAD + [f"u_emb_{i}" for i in range(DIM)] + [f"a_emb_{i}" for i in range(DIM)]
 
 
 def split_calibration(df: pd.DataFrame, fraction: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -99,17 +75,30 @@ def evaluate(model, x: np.ndarray, y: np.ndarray) -> dict:
             "valid_mean_pctr": float(p.mean()), "valid_ctr": float(y.mean())}
 
 
-def should_promote(new: dict, old: dict | None, age_days: float, max_age_days: float) -> tuple[bool, str]:
+def should_promote(new: dict, old: dict | None, age_days: float, max_age_days: float,
+                   min_auc: float = 0.55, max_auc_drop: float = 0.02) -> tuple[bool, str]:
+    """champion을 새 모델로 바꿀지 정한다.
+
+    어떤 경우든 새 모델 valid AUC가 min_auc 미만이면 바꾸지 않는다(상류 피처가 깨진 모델 차단).
+    champion이 max_age_days보다 오래됐어도 champion보다 max_auc_drop 넘게 낮으면 바꾸지 않는다.
+    """
+    auc = new["valid_auc"]
+    if auc < min_auc:
+        return False, f"AUC {auc:.4f} < 최소 {min_auc}"
     if old is None:
         return True, "비교할 champion이 없다"
-    if new["valid_auc"] > old["valid_auc"]:
-        return True, f"AUC {old['valid_auc']:.4f} → {new['valid_auc']:.4f}"
+    if auc > old["valid_auc"]:
+        return True, f"AUC {old['valid_auc']:.4f} → {auc:.4f}"
     if age_days >= max_age_days:
-        return True, f"champion이 {age_days:.1f}일 됐다(한도 {max_age_days}일)"
-    return False, f"AUC {new['valid_auc']:.4f} <= champion {old['valid_auc']:.4f}, {age_days:.1f}일"
+        if auc >= old["valid_auc"] - max_auc_drop:
+            return True, f"champion이 {age_days:.1f}일 됐고 AUC 하락 {old['valid_auc'] - auc:.4f} <= {max_auc_drop}"
+        return False, (f"champion이 {age_days:.1f}일 됐지만 AUC {old['valid_auc']:.4f} → {auc:.4f}, "
+                       f"하락 폭이 {max_auc_drop}보다 크다")
+    return False, f"AUC {auc:.4f} <= champion {old['valid_auc']:.4f}, {age_days:.1f}일"
 
 
-def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_days: float) -> bool:
+def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_days: float,
+               min_auc: float, max_auc_drop: float) -> bool:
     """기록·등록하고 추론 서버가 새 모델을 읽어야 하면 True."""
     uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not uri:
@@ -135,7 +124,7 @@ def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_day
         loaded = mlflow.lightgbm.load_model(f"models:/{name}/{champion.version}")
         old = evaluate(loaded, x_valid, y_valid)
         age_days = (time.time() - champion.creation_timestamp / 1000) / 86400
-    promote, reason = should_promote(metrics, old, age_days, max_age_days)
+    promote, reason = should_promote(metrics, old, age_days, max_age_days, min_auc, max_auc_drop)
 
     with mlflow.start_run():
         mlflow.log_params(params)
@@ -166,7 +155,11 @@ def main() -> None:
     parser.add_argument("--calib-fraction", type=float, default=0.1)
     parser.add_argument("--min-clicks", type=int, default=20, help="fit·calib·valid 각각 필요한 최소 클릭 수")
     parser.add_argument("--champion-max-age-days", type=float, default=7.0,
-                        help="champion이 이보다 오래되면 점수가 낮아도 바꾼다")
+                        help="champion이 이보다 오래되면 AUC가 조금 낮아도(--max-auc-drop 안) 바꾼다")
+    parser.add_argument("--min-auc", type=float, default=0.55,
+                        help="새 모델 valid AUC가 이보다 낮으면 어떤 경우에도 champion으로 올리지 않는다")
+    parser.add_argument("--max-auc-drop", type=float, default=0.02,
+                        help="champion이 오래됐을 때 허용하는 champion 대비 AUC 하락 폭")
     args = parser.parse_args()
 
     df = pd.read_parquet(args.training_set)
@@ -228,7 +221,8 @@ def main() -> None:
     params |= {"calib_a": a, "calib_b": b, "best_iteration": model.best_iteration,
                "negative_ratio": 1, "fit_rows": len(chosen), "calib_rows": counts["calib"][0],
                "valid_rows": counts["valid"][0]}
-    if not log_mlflow(final, params, metrics, x[valid], y[valid], args.champion_max_age_days):
+    if not log_mlflow(final, params, metrics, x[valid], y[valid], args.champion_max_age_days,
+                      args.min_auc, args.max_auc_drop):
         sys.exit(NOT_PROMOTED)
 
 

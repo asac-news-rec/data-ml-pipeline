@@ -23,7 +23,9 @@ uv run --frozen --extra train python training/train_lgbm.py \
 
 ## MLflow (선택)
 
-`MLFLOW_TRACKING_URI`가 있으면 실험 기록과 모델 등록을 한다. `MODEL_NAME` 기본값은 `pctr`이고, 등록 뒤 같은 `valid`로 잰 AUC가 이전 champion보다 높을 때만 `champion` alias를 옮긴다. champion이 7일(`--champion-max-age-days`, 임시값)보다 오래되면 낮아도 옮긴다.
+`MLFLOW_TRACKING_URI`가 있으면 실험 기록과 모델 등록을 한다. `MODEL_NAME` 기본값은 `pctr`이고, 등록 뒤 같은 `valid`로 잰 AUC가 이전 champion보다 높을 때만 `champion` alias를 옮긴다. champion이 7일(`--champion-max-age-days`, 임시값)보다 오래되면 AUC 하락이 0.02(`--max-auc-drop`) 안일 때만 옮긴다. 새 모델 AUC가 0.55(`--min-auc`)보다 낮으면 첫 모델이어도 옮기지 않는다(상류 피처가 깨진 모델 차단).
+
+입력 행렬(열 순서·결측 채우기)은 `serving/matrix.py` 하나를 추론 서버와 같이 쓴다. 학습 이미지는 저장소 전체를 `/app`에 두므로 `serving/matrix.py`도 들어 있다.
 
 ```bash
 MLFLOW_TRACKING_URI=http://mlflow.mlflow.svc.cluster.local:5000 \
