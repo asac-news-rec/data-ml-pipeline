@@ -418,6 +418,17 @@ embed = [
     { name = "torch", version = "2.15.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
 ]
+serving = [
+    { name = "fastapi" },
+    { name = "feast", extra = ["gcp", "redis"] },
+    { name = "lightgbm" },
+    { name = "mlflow" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "scikit-learn" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 train = [
     { name = "feast", extra = ["gcp", "redis"] },
     { name = "lightgbm" },
@@ -431,25 +442,34 @@ train = [
 [package.metadata]
 requires-dist = [
     { name = "db-dtypes", marker = "extra == 'airflow-dag'" },
+    { name = "fastapi", marker = "extra == 'serving'" },
     { name = "feast", extras = ["gcp", "redis"], marker = "extra == 'airflow-dag'", specifier = "==0.68.0" },
+    { name = "feast", extras = ["gcp", "redis"], marker = "extra == 'serving'", specifier = "==0.68.0" },
     { name = "feast", extras = ["gcp", "redis"], marker = "extra == 'train'", specifier = "==0.68.0" },
     { name = "google-cloud-bigquery", marker = "extra == 'airflow-dag'" },
     { name = "google-cloud-bigquery", marker = "extra == 'embed'" },
     { name = "google-cloud-secret-manager", marker = "extra == 'embed'" },
+    { name = "lightgbm", marker = "extra == 'serving'" },
     { name = "lightgbm", marker = "extra == 'train'" },
+    { name = "mlflow", marker = "extra == 'serving'" },
     { name = "mlflow", marker = "extra == 'train'" },
     { name = "numpy", marker = "extra == 'airflow-dag'" },
+    { name = "numpy", marker = "extra == 'serving'" },
     { name = "numpy", marker = "extra == 'train'" },
     { name = "pandas", marker = "extra == 'airflow-dag'" },
+    { name = "pandas", marker = "extra == 'serving'" },
     { name = "pandas", marker = "extra == 'train'" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'embed'" },
     { name = "pyarrow", marker = "extra == 'airflow-dag'" },
     { name = "pyarrow", marker = "extra == 'train'" },
+    { name = "pydantic", marker = "extra == 'serving'" },
+    { name = "scikit-learn", marker = "extra == 'serving'" },
     { name = "scikit-learn", marker = "extra == 'train'" },
     { name = "sentence-transformers", marker = "extra == 'embed'" },
     { name = "torch", marker = "extra == 'embed'", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'serving'" },
 ]
-provides-extras = ["airflow-dag", "embed", "train"]
+provides-extras = ["airflow-dag", "embed", "train", "serving"]
 
 [[package]]
 name = "databricks-sdk"
