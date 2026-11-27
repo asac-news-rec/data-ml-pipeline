@@ -137,11 +137,12 @@ class LogMlflow(unittest.TestCase):
         client.set_registered_model_alias.assert_not_called()
         mlflow.lightgbm.log_model.assert_called_once()   # 등록은 한다
 
-    def test_changed_features_skip_comparison(self):
-        promoted, client, _ = self.run_log(champion=self.champion(), champion_auc=0.99,
-                                           champion_features=["old_feature"])
-        self.assertTrue(promoted)   # champion 점수(0.99)를 쓰지 않고 새 모델로 본다
-        client.set_registered_model_alias.assert_called_once()
+    def test_changed_features_register_without_promotion(self):
+        promoted, client, mlflow = self.run_log(champion=self.champion(), champion_auc=0.5,
+                                                champion_features=["old_feature"])
+        self.assertFalse(promoted)   # 지금 서빙 이미지가 새 열을 못 읽을 수 있어 자동으로 옮기지 않는다
+        client.set_registered_model_alias.assert_not_called()
+        mlflow.lightgbm.log_model.assert_called_once()   # 등록은 한다
 
     def test_without_simulated_column_only_registers(self):
         promoted, client, mlflow = self.run_log(error="RESOURCE_DOES_NOT_EXIST", real_data=False)

@@ -27,7 +27,7 @@ uv run --frozen --extra train python training/train_lgbm.py \
 
 training set에 `simulated` 열이 없으면 등록만 하고 champion은 옮기지 않는다. `simulated` 열은 `training/build_training_set.py`가 실제 로그로 만들 때만 붙인다. 그래서 아래 예시처럼 `--training-set` 없이 로컬 가짜 로그로 학습한 모델은 champion이 되지 않는다.
 
-champion과 피처 열(이름·순서)이 다르면 champion을 오늘 `valid`로 평가할 수 없다. 이때는 비교를 건너뛰고 `--min-auc`만 확인해 새 모델을 champion으로 올린다. 피처를 바꿀 때는 학습 이미지 → 새 모델 champion 등록 → 추론 서버 이미지 순서로 배포한다. 추론 서버는 시작할 때 모델 피처 열이 `serving/matrix.py`와 다르면 뜨지 않는다.
+champion과 피처 열(이름·순서)이 다르면 새 모델을 등록만 하고 champion은 옮기지 않는다. 지금 떠 있는 추론 서버 이미지가 새 열을 읽지 못할 수 있기 때문이다. 피처를 바꿀 때는 학습 이미지 → 새 모델 등록 → 새 추론 서버 이미지 배포 → MLflow에서 그 버전에 champion alias를 직접 옮김 순서로 한다. 다음 `train_pctr` 실행의 `restart_inference_server`가 바뀐 champion을 보고 추론 서버를 재시작한다. 추론 서버는 시작할 때 모델 피처 열이 `serving/matrix.py`와 다르면 뜨지 않는다.
 
 입력 행렬(열 순서·결측 채우기)은 `serving/matrix.py` 하나를 추론 서버와 같이 쓴다. 학습 이미지는 저장소 전체를 `/app`에 두므로 `serving/matrix.py`도 들어 있다.
 

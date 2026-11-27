@@ -122,7 +122,7 @@ def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_day
     mlflow.set_tracking_uri(uri)
     mlflow.set_experiment(os.environ.get("MLFLOW_EXPERIMENT", "pctr"))
     name, client = os.environ.get("MODEL_NAME", "pctr"), MlflowClient()
-    old, age_days, note = None, 0.0, ""
+    old, age_days, note, schema_changed = None, 0.0, "", False
     try:
         champion = client.get_model_version_by_alias(name, "champion")
     except MlflowException as exc:
@@ -133,14 +133,16 @@ def log_mlflow(model, params: dict, metrics: dict, x_valid, y_valid, max_age_day
     if champion is not None:
         loaded = as_booster(mlflow.lightgbm.load_model(f"models:/{name}/{champion.version}"))
         if loaded.feature_name() != feature_names():
-            # 피처 열이 바뀌면 champion은 오늘 x_valid로 predict할 수 없다. 비교 없이 새 모델로 본다.
-            note = f"champion v{champion.version}과 피처 열이 달라 비교하지 않았다. "
+            # 피처 열이 바뀌면 지금 떠 있는 추론 서버 이미지가 새 모델을 못 읽을 수 있다.
+            # 등록만 하고 champion은 옮기지 않는다. 새 서빙 이미지를 배포한 뒤 사람이 alias를 옮긴다.
+            schema_changed = True
+            note = f"champion v{champion.version}과 피처 열이 다르다. "
         else:
             old = evaluate(loaded, x_valid, y_valid)
             age_days = (time.time() - champion.creation_timestamp / 1000) / 86400
     promote, reason = should_promote(metrics, old, age_days, max_age_days, min_auc, max_auc_drop)
-    if note and old is None and promote:
-        reason = "피처 열이 바뀐 새 모델"
+    if schema_changed:
+        promote, reason = False, "새 서빙 이미지 배포 뒤 champion alias를 직접 옮긴다"
     reason = note + reason
     if not real_data:
         promote, reason = False, "training set에 simulated 열이 없다(실제 로그 학습이 아니다). " + reason
