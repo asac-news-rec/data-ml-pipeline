@@ -11,7 +11,8 @@ MLflow pctr@champion 버전과 추론 서버 Deployment의 annotation(news-rec/c
 Airflow Variables:
   train_work_image, gcp_project_id, feast_registry_path, feast_bq_temp_dataset, mlflow_tracking_uri (필수)
   train_include_simulator(기본 false. 가상 독자 로그로도 학습할 때만 true),
-  data_valid_from(선택. 이 시각 이후 로그만 학습·피처에 쓴다. build_feast_sources와 같은 값), train_days(기본 14), clean_bq_dataset(기본 clean), valkey_host, inference_namespace(기본 inference),
+  data_valid_from(선택. 이 시각 이후 로그만 학습·피처에 쓴다. build_feast_sources와 같은 값.
+    바꿀 때는 02:00 KST build_feast_sources 실행 전에 바꿔야 원천 표가 먼저 새 값으로 다시 만들어진다), train_days(기본 14), clean_bq_dataset(기본 clean), valkey_host, inference_namespace(기본 inference),
   inference_deployment(기본 inference-server)
   inference_namespace·inference_deployment를 바꾸면 RBAC(airflow-restart-inference)의 대상도 같이 바꿔야 한다.
 """

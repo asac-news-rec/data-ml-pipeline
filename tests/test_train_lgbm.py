@@ -80,10 +80,6 @@ class Train(unittest.TestCase):
         self.assertIs(features.feature_names, matrix.feature_names)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class FakeMlflowException(Exception):
     def __init__(self, error_code):
         super().__init__(error_code)
@@ -160,3 +156,7 @@ class MatrixRows(unittest.TestCase):
         df["a_emb"] = [rng.random(DIM).astype(np.float32) for _ in range(6)]
         rows = np.array([1, 4, 5])
         np.testing.assert_array_equal(T.to_matrix(df.iloc[rows]), T.to_matrix(df)[rows])
+
+
+if __name__ == "__main__":
+    unittest.main()
