@@ -1,6 +1,6 @@
-# 추론 서버 `/v1/rank`
+# 추천 서버 `/v1/recommend`
 
-뉴스 백엔드가 후보 기사를 보내면 Feast online store 피처로 PCTR을 계산해 순위를 돌려준다. 요청·응답은 `serving/openapi.json`에 적는다. 설계 배경은 [청사진](https://asac-news-rec.github.io/blueprint/overview.html#c2)에 있다.
+뉴스 WAS가 독자·분류 조건을 보내면 후보(최신 기사)를 골라 Feast online store 피처로 PCTR을 계산하고, 추천 순서대로 20개씩 커서와 함께 돌려준다. 요청·응답은 `serving/openapi.json`에 적는다. 설계 배경은 [청사진](https://asac-news-rec.github.io/blueprint/overview.html#c2)에 있다.
 
 ## 실행
 
@@ -42,6 +42,19 @@ docker build -f serving/Dockerfile -t <registry>/inference-server:<커밋 SHA 7�
 
 모델은 이미지에 넣지 않는다. Python 3.12, 포트 8080, 비루트 사용자(uid 10001)로 돈다.
 
+## 추천 후보 목록
+
+`POST /v1/recommend`의 후보는 매시 `feast_materialize` DAG의 `export_candidates`가 쓰는 `candidates.json`이다(최근 7일 기사, 최신순).
+추천 서버는 이 파일을 5분마다 다시 읽는다. 위치는 `CANDIDATES_PATH`로 정하고, 없으면 `FEAST_REGISTRY_PATH`와 같은 폴더의
+`candidates.json`을 읽는다. 정렬한 목록은 `VALKEY_HOST`의 `rec:list:*` 키에 30분 둔다(`VALKEY_HOST`가 없으면 메모리).
+
+| 환경변수 | 기본값 | 정하는 것 |
+|---|---|---|
+| `CANDIDATES_PATH` | registry 옆 `candidates.json` | 후보 목록 파일 |
+| `CANDIDATE_LIMIT` | 200 | 한 번에 점수를 매길 최신 기사 수 |
+| `CANDIDATES_REFRESH_S` | 300 | 후보 목록을 다시 읽는 간격(초) |
+| `RANKED_LIST_TTL_S` | 1800 | 커서가 유효한 시간(초) |
+
 ## API 명세
 
 `serving/openapi.json`(OpenAPI 3.1)이 명세다. 서버를 띄우면 `/docs`(화면)와 `/openapi.json`에서도 본다. 코드를 바꾸면 다시 만든다.
@@ -56,6 +69,10 @@ uv run --frozen --extra serving python -c "import json; from serving.app import 
 curl localhost:8080/healthz
 curl localhost:8080/readyz
 curl localhost:8080/v1/model
+curl -X POST localhost:8080/v1/recommend -H 'content-type: application/json' -d '{
+  "reader_id": "<reader_id>", "category": "사회", "size": 20
+}'
+# 내부 확인용(명세에는 없음)
 curl -X POST localhost:8080/v1/rank -H 'content-type: application/json' -d '{
   "request_id": "req-001",
   "reader_id": "<reader_id>",
@@ -71,5 +88,6 @@ curl -X POST localhost:8080/v1/rank -H 'content-type: application/json' -d '{
 - 독자 피처가 전부 없으면 `READER_FEATURES_NOT_FOUND`, 기사 임베딩이 없으면 `ARTICLE_FEATURES_NOT_FOUND`로 `defaulted`에 넣는다.
 - `news-[0-9a-f]{32}` 형식이 아닌 후보는 `UNKNOWN_ARTICLE`로 `unscored`에 넣는다. 실제 기사 ID 형식이 바뀌면 `ARTICLE_ID` 정규식을 고친다.
 - `features_as_of`는 온라인 store의 피처 기준 시각을 읽을 수 있게 되면 바꾼다. 지금은 `request_time`으로 둔다.
-- `context.device`는 계약에 있지만 현재 피처에 없어서 받기만 하고 쓰지 않는다.
+- `context.device`는 현재 피처에 없어서 받기만 하고 쓰지 않는다. `/v1/recommend`에는 없다.
+- OpenAPI에는 WAS가 부르는 `/v1/recommend`만 나온다. `/healthz`·`/readyz`·`/v1/model`·`/v1/rank`는 운영·확인용이라 숨겼다.
 - 시작할 때 모델이나 Feast 정의를 못 읽으면 프로세스가 끝난다. 쿠버네티스가 다시 띄우므로 MLflow·GCS가 잠깐 안 돼도 손으로 Pod를 지우지 않아도 된다.
