@@ -129,21 +129,27 @@ class Recommend(unittest.TestCase):
 
     def test_score_does_not_depend_on_candidate_order(self):
         """후보 순서가 바뀌어도 같은 기사는 같은 점수다. position 피처는 모두 SCORE_POSITION이다."""
+        sent = []
+
         def fetch(store, reader_id, candidates, request_time, positions=None):
-            self.fetched.append(positions)
+            sent.append((list(candidates), positions))
             return list(zip(candidates, positions))
         # 진짜 모델처럼 position이 점수에 들어간다: 0.01 + 기사 번호/100 - position/100000
         A.app.state.model.predict.side_effect = lambda rows: np.array(
             [0.01 + int(a[5:], 16) / 100 - p / 100000 for a, p in rows])
+        # CandidatePool.load()가 다시 정렬하므로 pick()이 기준 순서와 역순을 직접 돌려주게 한다
+        base = [a["article_id"] for a in ARTICLES[:30]]
         result = []
         with patch.object(A, "fetch_online", side_effect=fetch):
-            for articles in (ARTICLES, ARTICLES[::-1]):
-                A.app.state.pool = pool(articles)
+            for order in (base, base[::-1]):
+                A.app.state.pool = MagicMock(pick=MagicMock(return_value=order))
                 A.app.state.lists = R.MemoryLists()
                 items = self.call(category="정치", size=30).items
                 result.append({i.article_id: i.score for i in items})
-        self.assertEqual(result[0], result[1])
-        self.assertEqual(set(self.fetched[0]), {A.SCORE_POSITION})
+        self.assertEqual([c for c, _ in sent], [base, base[::-1]])   # 실제로 넘긴 순서가 달랐다
+        self.assertEqual(result[0], result[1])                        # 기사별 점수는 같다
+        for _, positions in sent:
+            self.assertEqual(set(positions), {A.SCORE_POSITION})
 
     def test_size_20_returns_20_and_next_starts_after_last_returned(self):
         """후보 45개, size=20: 20 → 20 → 5개. 커서는 실제로 돌려준 마지막 기사 다음에서 이어진다."""
