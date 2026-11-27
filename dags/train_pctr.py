@@ -3,6 +3,7 @@
 train_pctr Pod 하나가 training set을 만들고 바로 학습한다(파일을 같은 Pod 안에서만 주고받는다).
 종료 코드 98(champion 유지)·99(클릭 부족)는 skipped가 된다.
 restart_inference_server는 학습 결과와 상관없이(trigger_rule=all_done) 매번 돈다.
+학습이 실패하면 train_result가 upstream_failed가 되어 DAG run은 실패로 남는다.
 MLflow pctr@champion 버전과 추론 서버 Deployment의 annotation(news-rec/champion-version)이 다를 때만 재시작한다.
 그래서 alias를 옮긴 직후 Pod가 죽거나 재시작이 실패해도, 다음 실행(재시도·다음 날)이 다시 맞춘다.
 추론 서버는 시작할 때만 models:/pctr@champion을 읽으므로 재시작해야 새 모델이 나간다.
@@ -27,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from airflow.exceptions import AirflowException, AirflowSkipException
 from airflow.models import Variable
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import DAG
 from airflow.timetables.interval import CronDataIntervalTimetable
@@ -64,7 +66,13 @@ def champion_version(tracking_uri: str, model_name: str = "pctr") -> str | None:
         with urllib.request.urlopen(url, timeout=30) as response:
             return str(json.load(response)["model_version"]["version"])
     except urllib.error.HTTPError as exc:
-        if exc.code == 404:
+        # 등록 모델이 없으면 404 RESOURCE_DOES_NOT_EXIST, 모델은 있는데 alias만 없으면 400 INVALID_PARAMETER_VALUE.
+        # training/train_lgbm.py의 log_mlflow와 같은 기준으로 둘 다 "champion 없음"으로 본다. 나머지는 장애다.
+        try:
+            code = json.loads(exc.read() or b"{}").get("error_code")
+        except ValueError:
+            code = None
+        if code in ("RESOURCE_DOES_NOT_EXIST", "INVALID_PARAMETER_VALUE"):
             return None
         raise
 
@@ -166,4 +174,9 @@ with DAG(
     restart = PythonOperator(task_id="restart_inference_server", python_callable=restart_inference_server,
                              trigger_rule="all_done")
 
+    # restart가 all_done이라 그것만 leaf면 학습이 실패해도 run이 success가 된다.
+    # 학습 결과를 DAG run 상태에 남기는 leaf를 하나 더 둔다(train 실패 → upstream_failed → run 실패, skip → skip).
+    train_result = EmptyOperator(task_id="train_result")
+
     check >> train >> restart
+    train >> train_result

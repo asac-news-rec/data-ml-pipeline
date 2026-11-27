@@ -7,7 +7,7 @@ Data pipeline (ingest, clean, features) and ML training
 - `transform/`: 정제 코드. `clean_events.py`가 `sql/clean_events.sql`로 `clean.*`을 만든다. `build_feast_sources.py`는 `clean.actions` + `feat.article_*`로 Feast 원천 표 4개를 매시 다시 만든다(SQL `transform/sql/build_feast_sources.sql`, `prepare_sources.py`와 같은 계산).
 - `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다. `embed_articles.py`가 Cloud SQL 새 기사를 multilingual-e5-base로 임베딩해 `feat.article_embedding`·`feat.article_meta`에 넣는다.
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
-- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다.
+- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다. 그 밖에 `test_embed_articles.py`·`test_build_feast_sources.py`·`test_build_training_set.py`·`test_train_lgbm.py`·`test_train_pctr_dag.py`(학습·재시작 DAG)·`test_serving_*.py`·`test_recommend.py`·`test_simulate_readers.py`·`test_materialize_feast.py`·`test_hourly_schedules.py`·`test_generate_news.py`가 있다. Airflow를 import하는 테스트는 Airflow 환경에서만 돈다.
 - `serving/`: 추론 서버(FastAPI, `POST /v1/rank`). 실행·환경변수는 `serving/README.md`, API 계약은 `serving/openapi.json`.
 - `training/`: training set 생성과 LightGBM 학습(`training/README.md`).
 - `docs/`: [계획] 아직 없다.

@@ -1,6 +1,9 @@
 """train_pctr: champion 버전과 추론 서버 annotation을 비교해 필요할 때만 재시작한다."""
 import importlib.util
+import io
+import json
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -84,3 +87,40 @@ class Dag(unittest.TestCase):
         train = T.dag.get_task("train_pctr")
         self.assertEqual(train.startup_timeout_seconds, 600)
         self.assertEqual(train.execution_timeout.total_seconds(), 3600)
+
+    def test_failed_training_fails_the_run(self):
+        """restart(all_done)만 leaf면 학습이 실패해도 run이 success다. train_result leaf가 실패를 남긴다."""
+        result = T.dag.get_task("train_result")
+        self.assertEqual(result.upstream_task_ids, {"train_pctr"})
+        self.assertEqual(result.trigger_rule, "all_success")   # train 실패 → upstream_failed, skip → skip
+        self.assertEqual({t.task_id for t in T.dag.leaves}, {"restart_inference_server", "train_result"})
+
+
+def http_error(code, error_code=None):
+    body = json.dumps({"error_code": error_code}).encode() if error_code else b"<html>"
+    return urllib.error.HTTPError("http://mlflow/x", code, "err", {}, io.BytesIO(body))
+
+
+class ChampionVersion(unittest.TestCase):
+    def call(self, outcome):
+        with patch.object(T.urllib.request, "urlopen") as urlopen:
+            if isinstance(outcome, Exception):
+                urlopen.side_effect = outcome
+            else:
+                urlopen.return_value.__enter__.return_value = io.BytesIO(json.dumps(outcome).encode())
+            return T.champion_version("http://mlflow/")
+
+    def test_200_returns_version(self):
+        self.assertEqual(self.call({"model_version": {"version": "7"}}), "7")
+
+    def test_404_no_model_is_none(self):
+        self.assertIsNone(self.call(http_error(404, "RESOURCE_DOES_NOT_EXIST")))
+
+    def test_400_no_alias_is_none(self):
+        """모델은 등록됐는데 alias만 없다(첫 학습이 min_auc에 못 미침): champion 없음으로 skip한다."""
+        self.assertIsNone(self.call(http_error(400, "INVALID_PARAMETER_VALUE")))
+
+    def test_other_400_and_500_raise(self):
+        for err in (http_error(400, "BAD_REQUEST"), http_error(500, "INTERNAL_ERROR"), http_error(502)):
+            with self.assertRaises(urllib.error.HTTPError):
+                self.call(err)
