@@ -8,6 +8,7 @@
   FEAST_REGISTRY_PATH  Feast registry 위치. CANDIDATES_PATH가 없으면 같은 폴더의 candidates.json에 쓴다
   CANDIDATES_PATH    (선택) 쓸 위치를 직접 정할 때 (gs://버킷/경로.json 또는 로컬 경로)
   FEAT_BQ_DATASET    article_meta가 있는 데이터셋 (기본 feat)
+  FEAT_TABLE_PREFIX  article_meta 표 이름 앞말 (개인 dataset 시험용, 기본 없음)
   CANDIDATE_DAYS     며칠 안의 기사까지 (기본 7)
   CANDIDATE_MAX      최대 기사 수 (기본 5000)
 """
@@ -72,7 +73,7 @@ def main() -> None:
     from google.cloud import bigquery
 
     project = os.environ["GCP_PROJECT_ID"]
-    table = f"{project}.{os.environ.get('FEAT_BQ_DATASET', 'feat')}.article_meta"
+    table = f"{project}.{os.environ.get('FEAT_BQ_DATASET', 'feat')}.{os.environ.get('FEAT_TABLE_PREFIX', '')}article_meta"
     config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("days", "INT64", int(os.environ.get("CANDIDATE_DAYS", "7"))),
         bigquery.ScalarQueryParameter("max_rows", "INT64", int(os.environ.get("CANDIDATE_MAX", "5000"))),

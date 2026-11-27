@@ -138,6 +138,7 @@ with DAG(
         ),
         env_vars={
             "GCP_PROJECT_ID": "{{ var.value.gcp_project_id }}",
+            "FEAT_BQ_DATASET": "{{ var.value.get('feat_bq_dataset', 'feat') }}",
             # 경로는 export_candidates.py가 registry 부모 폴더에서 만든다(추천 서버와 같은 규칙).
             "FEAST_REGISTRY_PATH": "{{ var.value.feast_registry_path }}",
         },
