@@ -15,8 +15,10 @@ class OpenApi(unittest.TestCase):
     def test_spec_matches_code(self):
         self.assertEqual(json.loads(SPEC.read_text(encoding="utf-8")), app.openapi())
 
-    def test_rank_statuses(self):
-        self.assertEqual(set(app.openapi()["paths"]["/v1/rank"]["post"]["responses"]), {"200", "400", "503"})
+    def test_only_was_api_is_documented(self):
+        paths = app.openapi()["paths"]
+        self.assertEqual(list(paths), ["/v1/recommend"])
+        self.assertEqual(set(paths["/v1/recommend"]["post"]["responses"]), {"200", "400", "503"})
 
 
 if __name__ == "__main__":
