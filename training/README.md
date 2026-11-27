@@ -25,6 +25,10 @@ uv run --frozen --extra train python training/train_lgbm.py \
 
 `MLFLOW_TRACKING_URI`가 있으면 실험 기록과 모델 등록을 한다. `MODEL_NAME` 기본값은 `pctr`이고, 등록 뒤 같은 `valid`로 잰 AUC가 이전 champion보다 높을 때만 `champion` alias를 옮긴다. champion이 7일(`--champion-max-age-days`, 임시값)보다 오래되면 AUC 하락이 0.02(`--max-auc-drop`) 안일 때만 옮긴다. 새 모델 AUC가 0.55(`--min-auc`)보다 낮으면 첫 모델이어도 옮기지 않는다(상류 피처가 깨진 모델 차단).
 
+training set에 `simulated` 열이 없으면 등록만 하고 champion은 옮기지 않는다. `simulated` 열은 `training/build_training_set.py`가 실제 로그로 만들 때만 붙인다. 그래서 아래 예시처럼 `--training-set` 없이 로컬 가짜 로그로 학습한 모델은 champion이 되지 않는다.
+
+champion과 피처 열(이름·순서)이 다르면 새 모델을 등록만 하고 champion은 옮기지 않는다. 지금 떠 있는 추론 서버 이미지가 새 열을 읽지 못할 수 있기 때문이다. 피처를 바꿀 때는 학습 이미지 → 새 모델 등록 → 새 추론 서버 이미지 배포 → MLflow에서 그 버전에 champion alias를 직접 옮김 순서로 한다. 다음 `train_pctr` 실행의 `restart_inference_server`가 바뀐 champion을 보고 추론 서버를 재시작한다. 추론 서버는 시작할 때 모델 피처 열이 `serving/matrix.py`와 다르면 뜨지 않는다.
+
 입력 행렬(열 순서·결측 채우기)은 `serving/matrix.py` 하나를 추론 서버와 같이 쓴다. 학습 이미지는 저장소 전체를 `/app`에 두므로 `serving/matrix.py`도 들어 있다.
 
 ```bash
@@ -34,3 +38,23 @@ MLFLOW_TRACKING_URI=http://mlflow.mlflow.svc.cluster.local:5000 \
 ```
 
 MLflow 서버는 클러스터 안에서만 접근된다. 로컬에서는 `MLFLOW_TRACKING_URI`를 비워 두면 모델 파일만 저장한다.
+
+## 매일 자동 학습 (`dags/train_pctr.py`)
+
+매일 02:30 KST에 돈다. 사람이 하는 단계는 없다.
+
+1. `training/build_training_set.py`: `clean.served`·`clean.actions`로 label을 만들고 Feast offline에서 served 시점 피처를 붙인다.
+   최근 14일, 마지막 24시간은 valid, 끝 3시간은 클릭이 도착하지 않았을 수 있어 뺀다(모두 임시값).
+2. `training/train_lgbm.py`: 학습하고 MLflow에 등록한다. champion과 비교한다.
+3. champion이 바뀌었으면 추론 서버를 롤링 재시작하고 새 Pod가 준비될 때까지 기다린다.
+
+| 종료 코드 | 뜻 | Airflow |
+|---|---|---|
+| 0 | champion을 바꿨다 | 추론 서버 재시작 |
+| 98 | 새 모델이 더 낫지 않다 | skipped |
+| 99 | 클릭이 부족하다 | skipped |
+
+가상 독자 로그(`model_version='simulator'`)는 기본으로 뺀다. `train_include_simulator=true`일 때만 넣고, 넣은 행 수를 MLflow `simulated_rows`에 남긴다.
+
+재시작 task는 Airflow 스케줄러 안에서 돈다(LocalExecutor). 스케줄러 계정의 `inference` 네임스페이스 deployment `get`·`patch` 권한이 필요하다.
+추론 서버는 `MODEL_URI=models:/pctr@champion`으로 떠 있어야 한다.

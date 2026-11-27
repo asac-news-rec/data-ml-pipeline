@@ -10,11 +10,14 @@ reader_activity, reader_article. 매번 CREATE OR REPLACE로 전체를 다시 �
   FEAT_BQ_DATASET         article_meta·article_embedding이 있는 데이터셋 (기본 feat)
   FEAST_SOURCE_DATASET    결과 표를 쓸 데이터셋 (기본 feat. Feast의 FEAST_BQ_DATASET과 같은 값)
   CLEAN_TABLE_PREFIX, FEAT_TABLE_PREFIX, FEAST_SOURCE_PREFIX   표 이름 앞말 (개인 dataset 시험용)
+  DATA_VALID_FROM         이 시각 이후 행동만 쓴다 (ISO 8601, 시간대 필수. 예: 2026-11-26T14:00:00+09:00).
+                          비어 있으면 거르지 않는다. 부하 테스트·인프라 변경 전 시험 로그를 지우지 않고 뺄 때 쓴다.
 """
 from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 SQL = Path(__file__).parent / "sql" / "build_feast_sources.sql"
@@ -41,8 +44,25 @@ def render(names: dict[str, str]) -> str:
     return text
 
 
-def run(client, names: dict[str, str]) -> dict[str, int]:
-    counts = {row.t: row.n for row in client.query(render(names)).result()}
+def valid_from(value: str | None) -> datetime:
+    """DATA_VALID_FROM → UTC 시각. 비어 있으면 1970-01-01(거르지 않음). 시간대가 없으면 실패한다."""
+    if not value or not value.strip():
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+    try:
+        when = datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise SystemExit(f"DATA_VALID_FROM 형식이 틀렸다: {value!r} (예: 2026-11-26T14:00:00+09:00)") from exc
+    if when.tzinfo is None:
+        raise SystemExit(f"DATA_VALID_FROM에 시간대가 없다: {value!r} (예: +09:00)")
+    return when.astimezone(timezone.utc)
+
+
+def run(client, names: dict[str, str], since: datetime) -> dict[str, int]:
+    from google.cloud import bigquery
+
+    config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("data_valid_from", "TIMESTAMP", since)])
+    counts = {row.t: row.n for row in client.query(render(names), job_config=config).result()}
     for name, n in counts.items():
         print(f"  {name}: {n:,}행")
     return counts
@@ -54,9 +74,11 @@ def main() -> None:
     from google.cloud import bigquery
 
     project = os.environ["GCP_PROJECT_ID"]
+    since = valid_from(os.environ.get("DATA_VALID_FROM"))
     names = table_names(project, dict(os.environ))
     print("Feast 원천 표 다시 만들기 →", ", ".join(names[f"out_{t}"] for t in OUTPUTS))
-    run(bigquery.Client(project=project), names)
+    print(f"행동 시작 시각(DATA_VALID_FROM): {since.isoformat()}")
+    run(bigquery.Client(project=project), names, since)
 
 
 if __name__ == "__main__":

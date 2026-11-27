@@ -3,15 +3,16 @@ Data pipeline (ingest, clean, features) and ML training
 
 ## 현재 구성
 
-- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34), 기사 임베딩 `embed_articles.py`(#36), Feast 원천 표 `build_feast_sources.py`(#38)가 있다.
+- `dags/`: Airflow DAG. 연결 확인용 `hello_airflow.py`(#12), 행동 로그 GCS 내보내기 `export_behavior_logs.py`(#14), Feast materialize `materialize_feast.py`(#16), GCS → BigQuery raw 적재 `load_raw.py`(#32), raw → clean 정제 `clean_events.py`(#34), 기사 임베딩 `embed_articles.py`(#36), Feast 원천 표 `build_feast_sources.py`(#38), 매일 학습 `train_pctr.py`(#52)가 있다.
 - `transform/`: 정제 코드. `clean_events.py`가 `sql/clean_events.sql`로 `clean.*`을 만든다. `build_feast_sources.py`는 `clean.actions` + `feat.article_*`로 Feast 원천 표 4개를 매시 다시 만든다(SQL `transform/sql/build_feast_sources.sql`, `prepare_sources.py`와 같은 계산).
 - `ingest/`: 적재 코드. `load_raw.py`가 GCS 행동 로그를 `raw.served`·`raw.actions`에 넣는다. `embed_articles.py`가 Cloud SQL 새 기사를 multilingual-e5-base로 임베딩해 `feat.article_embedding`·`feat.article_meta`에 넣는다.
 - `features/feast/`: Feast 피처 스토어. 로컬(parquet + SQLite), BigQuery 오프라인, GCS registry + Valkey 온라인을 쓴다. 실행 방법은 `features/feast/README.md`.
-- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다.
+- `tests/`: `test_export_bounds.py`(unittest). 행동 로그 내보내기 구간 입력과 업로드 → 정리 의존성을 검증한다. `test_load_raw.py`는 raw 적재의 시간 구간·중복 건너뛰기를, `test_clean_events.py`는 정제 범위·표 이름·파티션 필터를 검증한다. 그 밖에 `test_embed_articles.py`·`test_build_feast_sources.py`·`test_build_training_set.py`·`test_train_lgbm.py`·`test_train_pctr_dag.py`(학습·재시작 DAG)·`test_serving_*.py`·`test_recommend.py`·`test_simulate_readers.py`·`test_materialize_feast.py`·`test_hourly_schedules.py`·`test_generate_news.py`가 있다. Airflow를 import하는 테스트는 Airflow 환경에서만 돈다.
 - `serving/`: 추론 서버(FastAPI, `POST /v1/rank`). 실행·환경변수는 `serving/README.md`, API 계약은 `serving/openapi.json`.
-- `training/`, `docs/`: [계획] 아직 없다.
+- `training/`: training set 생성과 LightGBM 학습(`training/README.md`).
+- `docs/`: [계획] 아직 없다.
 - `dags/simulate_readers.py`·`ingest/simulate_readers.py`(#44): [임시] 한 바퀴 시험용 가상 독자 200명의 served·actions 로그를 매시 로깅 서버 내보내기와 같은 경로·줄 형식으로 행동 로그 버킷에 쓴다. 기사는 `feat.article_meta`에서 고르고, actions는 `source=simulator`, served는 `model_version=simulator`로 표시한다. 기본은 꺼져 있다: Variable `simulate_readers_enabled=true`일 때만 쓴다. 실제 독자 로그가 생기면 지운다. 테스트 `tests/test_simulate_readers.py`.
-  - 실제 데이터와 섞이는 범위: 가상 독자 `reader_id`는 `uuid5(SIM_NAMESPACE, "reader-<i>")`로 실제 독자와 겹치지 않는다. Feast 피처(`transform/sql/build_feast_sources.sql`)는 모두 `reader_id`별로 계산하므로 실제 독자 피처 값은 바뀌지 않는다. [계획] 학습 입력에서 `model_version='simulator'` 행을 기본으로 빼는 조건은 #53 `training/build_training_set.py`에 있다(`train_include_simulator=true`일 때만 넣는다). 켜는 조건: #53이 main에 머지된 뒤에만 `simulate_readers_enabled=true`로 둔다. 운영 집계는 아직 없고, 만들 때 같은 조건으로 뺀다.
+  - 실제 데이터와 섞이는 범위: 가상 독자 `reader_id`는 `uuid5(SIM_NAMESPACE, "reader-<i>")`로 실제 독자와 겹치지 않는다. Feast 피처(`transform/sql/build_feast_sources.sql`)는 모두 `reader_id`별로 계산하므로 실제 독자 피처 값은 바뀌지 않는다. 학습 입력에서 `model_version='simulator'` 행을 기본으로 빼는 조건은 `training/build_training_set.py`에 있다(`train_include_simulator=true`일 때만 넣는다). 켜는 조건: #53이 main에 머지된 뒤에만 `simulate_readers_enabled=true`로 둔다. 운영 집계는 아직 없고, 만들 때 같은 조건으로 뺀다.
 
 ## 개발 환경
 

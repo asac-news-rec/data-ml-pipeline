@@ -8,6 +8,8 @@ Airflow Variables:
   feast_work_image, gcp_project_id (필수)
   clean_bq_dataset(기본 clean), feat_bq_dataset(기본 feat),
   feast_bq_dataset(결과 표 위치. feast_materialize와 같은 Variable, '프로젝트.데이터셋' 또는 데이터셋 이름, 기본 feat)
+  data_valid_from(선택. 이 시각 이후 행동만 피처에 쓴다. 예: 2026-11-26T14:00:00+09:00. 비어 있으면 전부)
+    부하 테스트·인프라 변경으로 생긴 시험 로그를 지우지 않고 뺄 때 값만 새 시각으로 옮긴다.
 """
 import os
 from datetime import datetime, timedelta
@@ -70,6 +72,7 @@ with DAG(
             "CLEAN_BQ_DATASET": "{{ var.value.get('clean_bq_dataset', 'clean') }}",
             "FEAT_BQ_DATASET": "{{ var.value.get('feat_bq_dataset', 'feat') }}",
             "FEAST_SOURCE_DATASET": "{{ var.value.get('feast_bq_dataset', 'feat') }}",
+            "DATA_VALID_FROM": "{{ var.value.get('data_valid_from', '') }}",
         },
         get_logs=True,
         on_finish_action="delete_pod",

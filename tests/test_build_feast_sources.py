@@ -30,6 +30,24 @@ class BuildFeastSourcesTests(unittest.TestCase):
         for name in module.OUTPUTS:   # Feast definitions.py가 읽는 이름
             self.assertRegex(sql, rf"CREATE OR REPLACE TABLE `p\.feat\.{name}`")
 
+    def test_valid_from_empty_keeps_everything(self):
+        for value in (None, "", "  "):
+            self.assertEqual(module.valid_from(value).year, 1970)
+
+    def test_valid_from_is_converted_to_utc(self):
+        when = module.valid_from("2026-11-26T14:00:00+09:00")
+        self.assertEqual(when.isoformat(), "2026-11-26T05:00:00+00:00")
+
+    def test_valid_from_rejects_bad_or_naive_values(self):
+        for value in ("어제", "2026-11-26 14:00", "2026-11-26T14:00:00"):
+            with self.assertRaises(SystemExit):
+                module.valid_from(value)
+
+    def test_both_event_kinds_use_valid_from(self):
+        """노출과 클릭 둘 다 거른다. 한쪽만 거르면 클릭은 있는데 노출이 없는 독자가 생긴다."""
+        sql = module.render(module.table_names("p", {}))
+        self.assertEqual(len(re.findall(r"event_time >= @data_valid_from", sql)), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
